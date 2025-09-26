@@ -1,0 +1,163 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+
+/* optional: your global styles */
+body {
+  @apply bg-gray-50 text-gray-900;
+}
+
+
+
+/* --- Base Reset --- */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+/* --- App Theme Variables --- */
+:root {
+  --primary: #2c3e50;
+  --secondary: #3498db;
+  --accent: #e74c3c;
+  --light: #f8f9fa;
+  --dark: #2c3e50;
+  --success: #2ecc71;
+}
+
+/* --- Body --- */
+body {
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  background-color: var(--light);
+  color: var(--dark);
+  line-height: 1.6;
+}
+
+/* --- Navbar --- */
+.navbar {
+  background-color: var(--primary) !important;
+}
+
+.navbar-brand {
+  font-weight: bold;
+  color: #fff !important;
+}
+
+.nav-link {
+  color: #ecf0f1 !important;
+}
+
+.nav-link:hover {
+  color: var(--secondary) !important;
+}
+
+/* --- Cards --- */
+.card {
+  border: none;
+  border-radius: 10px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  transition: transform 0.3s;
+}
+
+.card:hover {
+  transform: translateY(-5px);
+}
+
+.card-header {
+  background-color: var(--primary);
+  color: white;
+  border-radius: 10px 10px 0 0 !important;
+}
+
+/* --- Buttons --- */
+.btn-primary {
+  background-color: var(--secondary);
+  border: none;
+}
+
+.btn-primary:hover {
+  background-color: var(--primary);
+}
+
+/* --- Hero Section --- */
+.hero-section {
+  background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+  color: white;
+  padding: 3rem 0;
+  margin-bottom: 2rem;
+  border-radius: 0 0 20px 20px;
+}
+
+/* --- Utility --- */
+.cost-highlight {
+  font-size: 1.5rem;
+  font-weight: bold;
+  color: var(--secondary);
+}
+.cost-highlight .dollar-sign {
+  font-size: 1rem;
+  vertical-align: top;
+} 
+/* --- Footer --- */
+.footer {
+  background-color: var(--primary);
+  color: white;
+  text-align: center;
+  padding: 1rem 0;
+  margin-top: 2rem;
+}
+.footer a {
+  color: var(--secondary);
+  text-decoration: none;
+}
+.footer a:hover {
+  text-decoration: underline;
+}
+
+/* --- Responsive Design --- */
+@media (max-width: 768px) {
+  .hero-section {
+    padding: 2rem 1rem;
+  }
+  .card {
+    margin-bottom: 1.5rem;
+  }
+}
+/* --- Form Elements --- */
+input, textarea, select {
+  border: 1px solid #ccc;
+  border-radius: 5px;
+  padding: 0.5rem;
+  width: 100%;
+  margin-bottom: 1rem;
+  transition: border-color 0.3s;
+}
+input:focus, textarea:focus, select:focus {
+  border-color: var(--secondary);
+  outline: none;
+}
+
+
+
+.dark .react-select__control {
+  background-color: #1e293b !important;
+  border-color: #475569 !important;
+  color: #f1f5f9 !important;
+}
+.dark .react-select__menu {
+  background-color: #1e293b !important;
+}
+.dark .react-select__option {
+  color: #f1f5f9 !important;
+}
+.dark .react-select__option--is-focused {
+  background-color: #334155 !important;
+}
+.dark .react-select__multi-value {
+  background-color: #334155 !important;
+}
+.dark .react-select__multi-value__label {
+  color: #f1f5f9 !important;
+}
