@@ -1,4 +1,3 @@
-// BlobContext.jsx
 import { createContext, useContext, useState, useCallback } from "react";
 import blobApi from "../api/blobApi";
 

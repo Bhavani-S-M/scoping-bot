@@ -25,13 +25,21 @@ const blobApi = {
 
   uploadFolder: (files, folder = "", base = "knowledge_base") => {
     const form = new FormData();
-    for (const f of files) form.append("files", f);
+
+    for (const f of files) {
+      // Keep folder structure if user selected with webkitdirectory
+      const relPath = f.webkitRelativePath || f.name;
+      form.append("files", f, relPath);
+    }
+
     appendIfPresent(form, "folder", folder);
     appendIfPresent(form, "base", base);
+
     return api.post("/blobs/upload/folder", form, {
       headers: { "Content-Type": "multipart/form-data" },
     });
   },
+
 
   // Listing (Explorer-style only)
   explorer: (base = "knowledge_base") =>

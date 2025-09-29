@@ -195,6 +195,7 @@ export default function BlobDashboard() {
               mozdirectory=""
               directory=""
               className="hidden"
+            
               onChange={onUploadFolder}
             />
           </label>

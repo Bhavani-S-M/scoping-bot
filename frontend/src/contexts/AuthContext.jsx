@@ -76,7 +76,7 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  // ✅ NEW — update current user profile
+  // update current user profile
   const updateUserProfile = async (updates) => {
     try {
       const res = await authApi.updateMe(updates);

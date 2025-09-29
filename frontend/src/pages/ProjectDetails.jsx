@@ -73,7 +73,7 @@ export default function ProjectDetails() {
       {/* Uploaded Files */}
       <div className="bg-white dark:bg-dark-surface p-6 rounded-xl shadow-md border border-gray-200 dark:border-dark-muted">
         <h2 className="text-xl font-semibold mb-4 text-gray-800 dark:text-gray-100">
-          📂 Uploaded Documents
+          Uploaded Documents
         </h2>
         {project.files && project.files.length > 0 ? (
           <ul className="divide-y divide-gray-200 dark:divide-gray-700">
