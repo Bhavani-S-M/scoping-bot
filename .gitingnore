@@ -1,3 +1,3 @@
 frontend/minikube-linux-amd64
-backend/.env*
+backend/.env
 minikube-linux-amd64
