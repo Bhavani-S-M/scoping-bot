@@ -158,9 +158,7 @@ def generate_sas_url(expiry_hours: int = 1) -> str:
     return f"https://{AZURE_STORAGE_ACCOUNT}.blob.core.windows.net/{AZURE_STORAGE_CONTAINER}?{sas_token}"
 
 
-# -------------------------------
-# 🔧 Helpers
-# -------------------------------
+# Helpers
 def _normalize_path(blob_name: str, base: str) -> str:
     """Ensure blob paths don't duplicate base (fix 404 on delete)."""
     blob_name = blob_name.strip("/")

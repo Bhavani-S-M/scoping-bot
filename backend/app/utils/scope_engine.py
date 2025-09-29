@@ -220,10 +220,10 @@ def _rag_retrieve(query: str, k: int = 3, expand_neighbors: bool = True) -> List
             grouped.setdefault(h["parent_id"], []).append(h)
 
         # ---- Token budget check ----
-        model_name = "gpt-4o"  # Azure GPT-4o deployment
+        model_name = "gpt-4o" 
         tokenizer = tiktoken.encoding_for_model(model_name)
         context_limit = 128000
-        max_tokens = context_limit - 4000  # keep 4k buffer for system + completion
+        max_tokens = context_limit - 4000 
         used_tokens = 0
 
         ordered = []
@@ -254,13 +254,6 @@ def _rag_retrieve(query: str, k: int = 3, expand_neighbors: bool = True) -> List
 
 # ---------- Prompt ----------
 def _build_scope_prompt(rfp_text: str, kb_chunks: List[str], project=None, model_name: str = "gpt-4o") -> str:
-    """
-    Build the RAG prompt safely with token budget enforcement.
-    - rfp_text: raw text from project files
-    - kb_chunks: list of strings (already flattened from RAG)
-    - project: optional Project object with user-provided fields
-    - model_name: model to use for tokenizer (default gpt-4o)
-    """
 
     # Tokenizer
     tokenizer = tiktoken.encoding_for_model(model_name)
@@ -343,6 +336,7 @@ def _build_scope_prompt(rfp_text: str, kb_chunks: List[str], project=None, model
         '  "resourcing_plan": []\n'
         "}\n\n"
         "Rules:\n"
+        "start date of first activity should be from today date"
         "- `Owner` is the person responsible for managing the activity (for display only — not used for costing).\n"
         "- `Depends on` are the people or roles who will execute that activity (used for costing).\n"
         "- Do NOT include the Owner again inside `Depends on`. They must be distinct.\n"
@@ -375,6 +369,7 @@ def _clean_scope(data: Dict[str, Any], project=None) -> Dict[str, Any]:
     # =====================================================
     # ACTIVITIES
     # =====================================================
+    activities = []
     for idx, a in enumerate(data.get("activities", []) or [], start=1):
         a["id"] = idx
         months_effort = max(1.0, float(a.get("Effort Months") or 1))
@@ -414,13 +409,38 @@ def _clean_scope(data: Dict[str, Any], project=None) -> Dict[str, Any]:
         a["Depends on"] = ", ".join(normalized_deps)
 
         # --- Dates ---
-        start = _parse_date(a.get("Start Date") or "") or (today + timedelta(days=int(cursor * 30)))
-        end = _parse_date(a.get("End Date") or "") or (start + timedelta(days=int(months_effort * 30) - 1))
+        start = _parse_date(a.get("Start Date") or "")
+        end = _parse_date(a.get("End Date") or "")
+
+        if not start:
+            start = today + timedelta(days=int(cursor * 30))
+        if not end:
+            end = start + timedelta(days=int(months_effort * 30) - 1)
+
+        # Ensure end is not before start
+        if end < start:
+            end = start + timedelta(days=int(months_effort * 30) - 1)
+
         a["Start Date"], a["End Date"] = start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")
         cursor += months_effort
 
         min_start = min(min_start or start, start)
         max_end = max(max_end or end, end)
+        activities.append(a)
+
+    # --- Shift to today if first activity is in the past ---
+    if min_start and min_start < today:
+        shift_days = (today - min_start).days
+        for a in activities:
+            s = _parse_date(a["Start Date"])
+            e = _parse_date(a["End Date"])
+            if s and e:
+                s, e = s + timedelta(days=shift_days), e + timedelta(days=shift_days)
+                a["Start Date"], a["End Date"] = s.strftime("%Y-%m-%d"), e.strftime("%Y-%m-%d")
+        min_start = today
+        max_end = max(_parse_date(a["End Date"]) for a in activities if a.get("End Date"))
+
+    data["activities"] = activities
 
     # =====================================================
     # DURATION & MONTH LABELS
@@ -437,9 +457,9 @@ def _clean_scope(data: Dict[str, Any], project=None) -> Dict[str, Any]:
     # =====================================================
     resourcing_plan = []
     seen_roles = set()
-    for i, (rname, total_months) in enumerate(resource_month_map.items(), start=1):
+    for rname, total_months in resource_month_map.items():
         if rname in seen_roles:
-            continue  # skip duplicates
+            continue
         seen_roles.add(rname)
 
         eff = max(1, round(total_months))

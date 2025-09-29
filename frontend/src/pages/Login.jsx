@@ -31,8 +31,8 @@ export default function Login() {
         navigate("/dashboard");
       }
     } catch (err) {
-      console.error("❌ Login error:", err);
-      alert("❌ Login failed. Check your credentials and try again.");
+      console.error(" Login error:", err);
+      alert(" Login failed. Check your credentials and try again.");
     } finally {
       setLoading(false);
     }

@@ -5,9 +5,11 @@ FROM node:18-alpine AS builder
 
 WORKDIR /app
 
+# Install dependencies (cache layer)
 COPY package*.json ./
-RUN npm install
+RUN npm ci --silent
 
+# Copy rest of the source and build
 COPY . .
 RUN npm run build
 
@@ -16,14 +18,17 @@ RUN npm run build
 # -------------------------------
 FROM nginx:alpine
 
-# Remove default nginx page
+# Remove default nginx content
 RUN rm -rf /usr/share/nginx/html/*
 
-# Copy build output to Nginx
+# Copy React build output
 COPY --from=builder /app/dist /usr/share/nginx/html
 
-# Expose port
+# Copy custom Nginx config
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+
+# Expose port 80
 EXPOSE 80
 
-# Start Nginx
+# Run Nginx in foreground
 CMD ["nginx", "-g", "daemon off;"]

@@ -1,12 +1,15 @@
+// src/api/exportApi.js
 import api from "./axiosClient";
 
-// Safe filename helper
-const safeFileName = (name, ext) =>
-  name.replace(/\s+/g, "_").toLowerCase() + `.${ext}`;
+export const safeFileName = (name, ext) =>
+  name.replace(/[^a-z0-9_\-]/gi, "_").toLowerCase() + `.${ext}`;
 
-// Generic GET export (just return blob)
-const fetchExportBlob = async (url) => {
-  const res = await api.get(url, { responseType: "blob" });
+const fetchExportBlob = async (url, { signal, onDownloadProgress } = {}) => {
+  const res = await api.get(url, {
+    responseType: "blob",
+    signal,
+    onDownloadProgress,
+  });
 
   const contentType = res.headers["content-type"] || "";
   if (contentType.includes("application/json")) {
@@ -24,60 +27,74 @@ const fetchExportBlob = async (url) => {
 };
 
 const exportApi = {
-
-  // Preveiw
-  previewJson: async (projectId, scope) => {
+  // ---------- Preview ----------
+  previewJson: async (projectId, scope, { signal, onDownloadProgress } = {}) => {
     const res = await api.post(
       `/projects/${projectId}/export/preview/json`,
-      scope
+      scope,
+      { signal, onDownloadProgress }
     );
     return res.data;
   },
 
-  previewExcel: async (projectId, scope) => {
+  previewExcel: async (projectId, scope, { signal, onDownloadProgress } = {}) => {
     const res = await api.post(
       `/projects/${projectId}/export/preview/excel`,
       scope,
-      { responseType: "blob" }
+      { responseType: "blob", signal, onDownloadProgress }
     );
     return res.data;
   },
 
-  previewPdf: async (projectId, scope) => {
+  previewPdf: async (projectId, scope, { signal, onDownloadProgress } = {}) => {
     const res = await api.post(
       `/projects/${projectId}/export/preview/pdf`,
       scope,
-      { responseType: "blob" }
+      { responseType: "blob", signal, onDownloadProgress }
     );
     return res.data;
   },
 
-  // Finalise
-  finalizeScope: async (projectId, scope) => {
+  // ---------- Finalize ----------
+  finalizeScope: async (projectId, scope, { signal } = {}) => {
     const res = await api.post(
       `/projects/${projectId}/finalize_scope`,
       scope,
-      { headers: { "Content-Type": "application/json" } }
+      {
+        headers: { "Content-Type": "application/json" },
+        signal,
+      }
     );
-    return res.data; 
+    return res.data;
   },
 
-  // Finalised Exports
-
-  getPdfBlob: async (projectId) => {
-    return fetchExportBlob(`/projects/${projectId}/export/pdf`);
+  // ---------- Finalized Exports ----------
+  getPdfBlob: async (projectId, { signal, onDownloadProgress } = {}) => {
+    return fetchExportBlob(`/projects/${projectId}/export/pdf`, {
+      signal,
+      onDownloadProgress,
+    });
   },
 
-  exportToExcel: async (projectId) => {
-    return fetchExportBlob(`/projects/${projectId}/export/excel`);
+  exportToExcel: async (projectId, { signal, onDownloadProgress } = {}) => {
+    return fetchExportBlob(`/projects/${projectId}/export/excel`, {
+      signal,
+      onDownloadProgress,
+    });
   },
 
-  exportToPdf: async (projectId) => {
-    return fetchExportBlob(`/projects/${projectId}/export/pdf`);
+  exportToPdf: async (projectId, { signal, onDownloadProgress } = {}) => {
+    return fetchExportBlob(`/projects/${projectId}/export/pdf`, {
+      signal,
+      onDownloadProgress,
+    });
   },
 
-  exportToJson: async (projectId) => {
-    const res = await api.get(`/projects/${projectId}/export/json`);
+  exportToJson: async (projectId, { signal, onDownloadProgress } = {}) => {
+    const res = await api.get(`/projects/${projectId}/export/json`, {
+      signal,
+      onDownloadProgress,
+    });
     return res.data;
   },
 };

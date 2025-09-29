@@ -8,15 +8,9 @@ from fastapi import Depends
 from app.auth.router import fastapi_users
 
 get_current_superuser = fastapi_users.current_user(active=True, superuser=True)
-router = APIRouter(
-    prefix="/blobs",
-    tags=["Azure Blobs"],
-)
-
-
+router = APIRouter(prefix="/blobs",tags=["Azure Blobs"],)
 
 VALID_BASES = ("projects", "knowledge_base")
-
 
 def _validate_base(base: str) -> str:
     if base not in VALID_BASES:

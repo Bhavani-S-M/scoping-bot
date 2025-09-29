@@ -25,7 +25,7 @@ export default function ResetPassword() {
     try {
       await authApi.resetPassword(token, password);
       setMessage(" Password has been reset successfully.");
-      setTimeout(() => navigate("/login"), 2000); // redirect after success
+      setTimeout(() => navigate("/login"), 2000); 
     } catch (err) {
       console.error(" Reset password error:", err);
       setMessage(" Failed to reset password. Try again.");

@@ -24,7 +24,7 @@ router = APIRouter(prefix="/projects", tags=["Projects"])
 
 
 #  List Projects 
-@router.get("/", response_model=List[schemas.Project])
+@router.get("", response_model=List[schemas.Project])
 def list_projects(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_active_user),
@@ -33,15 +33,14 @@ def list_projects(
 
 
 # Create Project + Auto Scope Preview
-# Create Project + Auto Scope Preview
-@router.post("/", response_model=schemas.ProjectCreateResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=schemas.ProjectCreateResponse, status_code=status.HTTP_201_CREATED)
 async def create_project(
     name: Optional[str] = Form(None),
     domain: Optional[str] = Form(None),
     complexity: Optional[str] = Form(None),
     tech_stack: Optional[str] = Form(None),
     use_cases: Optional[str] = Form(None),
-    compliance: Optional[str] = Form(None),
+    compliance: Optional[str] = Form(None),             
     duration: Optional[str] = Form(None),
     files: Optional[List[UploadFile]] = File(None),
     db: Session = Depends(get_db),
@@ -125,7 +124,7 @@ def delete_project(
 
 
 # Delete All Projects
-@router.delete("/", response_model=schemas.MessageResponse)
+@router.delete("", response_model=schemas.MessageResponse)
 def delete_all_projects(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_active_user),

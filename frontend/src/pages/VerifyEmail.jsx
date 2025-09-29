@@ -4,7 +4,7 @@ import authApi from "../api/authApi";
 
 export default function VerifyEmail() {
   const [searchParams] = useSearchParams();
-  const [status, setStatus] = useState("loading"); // "loading" | "success" | "error"
+  const [status, setStatus] = useState("loading");
   const [message, setMessage] = useState("");
   const navigate = useNavigate();
 
@@ -22,7 +22,7 @@ export default function VerifyEmail() {
         await authApi.verifyEmail(token);
         setStatus("success");
         setMessage(" Email verified successfully! You can now log in.");
-        setTimeout(() => navigate("/login"), 2000); // redirect after 2s
+        setTimeout(() => navigate("/login"), 2000); 
       } catch (err) {
         console.error("Verification failed:", err);
         if (err.response?.data?.detail) {

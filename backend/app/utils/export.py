@@ -68,6 +68,29 @@ def normalize_scope(scope: Dict[str, Any]) -> Dict[str, Any]:
     min_start = min(start_dates) if start_dates else datetime.utcnow()
     max_end = max(end_dates) if end_dates else min_start
 
+    # --- SHIFT LOGIC: if activities are in the past, shift them into the future ---
+    today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    if min_start < today:
+        offset = (today - min_start).days
+        new_start_dates, new_end_dates = [], []
+        for a in data.get("activities") or []:
+            try:
+                if a.get("Start Date"):
+                    s = datetime.fromisoformat(a["Start Date"]) + timedelta(days=offset)
+                    a["Start Date"] = s.strftime("%Y-%m-%d")
+                    new_start_dates.append(s)
+                if a.get("End Date"):
+                    e = datetime.fromisoformat(a["End Date"]) + timedelta(days=offset)
+                    a["End Date"] = e.strftime("%Y-%m-%d")
+                    new_end_dates.append(e)
+            except:
+                pass
+        # Recompute bounds
+        start_dates = new_start_dates or start_dates
+        end_dates = new_end_dates or end_dates
+        min_start = min(start_dates) if start_dates else today
+        max_end = max(end_dates) if end_dates else min_start
+
     diff_days = max(1, (max_end - min_start).days)
     activity_months = max(1, round(diff_days / 30))
     user_duration = _to_int(ov.get("Duration"))
@@ -81,7 +104,9 @@ def normalize_scope(scope: Dict[str, Any]) -> Dict[str, Any]:
         "Use Cases": _safe_str(ov.get("Use Cases") or ""),
         "Compliance": _safe_str(ov.get("Compliance") or ""),
         "Duration": duration,
-        "Generated At": _safe_str(ov.get("Generated At") or datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"))
+        "Generated At": _safe_str(
+            ov.get("Generated At") or datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+        ),
     }
 
     # Build monthly label list
@@ -89,15 +114,16 @@ def normalize_scope(scope: Dict[str, Any]) -> Dict[str, Any]:
     cur = datetime(min_start.year, min_start.month, 1)
     while cur <= max_end:
         month_labels.append(cur.strftime("%b %Y"))
-        cur = datetime(cur.year + (1 if cur.month == 12 else 0),
-                       1 if cur.month == 12 else cur.month + 1, 1)
+        cur = datetime(
+            cur.year + (1 if cur.month == 12 else 0),
+            1 if cur.month == 12 else cur.month + 1,
+            1,
+        )
 
     acts = []
     role_month_map: Dict[str, Dict[str, float]] = {}
 
-    # =====================================================
     # ACTIVITIES LOOP
-    # =====================================================
     for idx, a in enumerate(data.get("activities") or [], start=1):
         try:
             s = datetime.fromisoformat(a.get("Start Date", "")) if a.get("Start Date") else min_start
@@ -116,8 +142,11 @@ def normalize_scope(scope: Dict[str, Any]) -> Dict[str, Any]:
         span_months, curm = [], datetime(s.year, s.month, 1)
         while curm <= e:
             span_months.append(curm.strftime("%b %Y"))
-            curm = datetime(curm.year + (1 if curm.month == 12 else 0),
-                            1 if curm.month == 12 else curm.month + 1, 1)
+            curm = datetime(
+                curm.year + (1 if curm.month == 12 else 0),
+                1 if curm.month == 12 else curm.month + 1,
+                1,
+            )
 
         per_month = total_months / len(span_months) if span_months else total_months
 
@@ -129,7 +158,10 @@ def normalize_scope(scope: Dict[str, Any]) -> Dict[str, Any]:
 
         norm_deps = []
         for r in all_roles:
-            match = next((k for k in ROLE_RATE_MAP if k.lower() in r.lower() or r.lower() in k.lower()), r.title())
+            match = next(
+                (k for k in ROLE_RATE_MAP if k.lower() in r.lower() or r.lower() in k.lower()), 
+                r.title()
+            )
 
             # Only include in "Depends on" if originally there (don’t duplicate Owner)
             if r in raw_deps:
@@ -149,14 +181,12 @@ def normalize_scope(scope: Dict[str, Any]) -> Dict[str, Any]:
             "Depends on": ", ".join(norm_deps),
             "Start Date": s.strftime("%Y-%m-%d"),
             "End Date": e.strftime("%Y-%m-%d"),
-            "Effort Months": total_months
+            "Effort Months": total_months,
         })
 
     data["activities"] = acts
 
-    # =====================================================
     # RESOURCING PLAN
-    # =====================================================
     user_res = {r.get("Resources", "").strip().lower(): r for r in (scope.get("resourcing_plan") or [])}
     res = []
     for idx, (role, month_map) in enumerate(role_month_map.items(), start=1):
@@ -171,7 +201,7 @@ def normalize_scope(scope: Dict[str, Any]) -> Dict[str, Any]:
             "Rate/month": rate,
             **{m: round(monthly[m], 1) for m in month_labels},
             "Efforts": eff,
-            "cost": cost
+            "cost": cost,
         })
 
     data["resourcing_plan"] = res
@@ -187,7 +217,7 @@ def generate_json_data(scope: Dict[str, Any]) -> Dict[str, Any]:
 def generate_xlsx(scope: Dict[str, Any]) -> io.BytesIO:
     try:
         from xlsxwriter.utility import xl_col_to_name
-        data = normalize_scope(scope)
+        data = scope
         buf = io.BytesIO()
         wb = xlsxwriter.Workbook(buf, {"in_memory": True})
 
@@ -316,7 +346,7 @@ def generate_xlsx(scope: Dict[str, Any]) -> io.BytesIO:
 
         #--- Resourcing Plan ---
         ws_r = wb.add_worksheet("Resources Plan")
-        month_keys = sorted([k for k in data["resourcing_plan"][0] if len(k.split())==2])
+        month_keys = [k for k in data["resourcing_plan"][0] if len(k.split())==2]
         res_headers = ["Resources","Rate/month"]+month_keys+["Efforts","Cost"]
         ws_r.write_row("A1",res_headers,fmt_th)
         ws_r.set_column("A:A", 25) 
@@ -416,7 +446,7 @@ def generate_xlsx(scope: Dict[str, Any]) -> io.BytesIO:
 
 # ---------- -------PDF ------------------
 def generate_pdf(scope: Dict[str, Any]) -> io.BytesIO:
-    data = normalize_scope(scope)
+    data = scope
     buf = io.BytesIO()
     W, H = landscape(A4)
     doc = SimpleDocTemplate(

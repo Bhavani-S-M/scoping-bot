@@ -127,7 +127,8 @@ def export_project_excel(
 ):
     project = _get_project(project_id, current_user.id, db)
     scope = _ensure_scope(project)
-    file = export.generate_xlsx(scope)
+    normalized = export.generate_json_data(scope or {})
+    file = export.generate_xlsx(normalized)
     safe_name = _safe_filename(project.name or f"project_{project.id}")
     return StreamingResponse(
         file,
@@ -144,7 +145,8 @@ def export_project_pdf(
 ):
     project = _get_project(project_id, current_user.id, db)
     scope = _ensure_scope(project)
-    file = export.generate_pdf(scope)
+    normalized = export.generate_json_data(scope or {})
+    file = export.generate_pdf(normalized)
     safe_name = _safe_filename(project.name or f"project_{project.id}")
     return StreamingResponse(
         file,

@@ -20,7 +20,7 @@ export default function Sidebar({ isOpen, setIsOpen, mobileOpen }) {
     { path: "/exports/1", label: "Exports", icon: <FileSpreadsheet className="w-5 h-5" /> },
   ];
 
-  // 🔹 Add Blob Manage for superusers only
+  //  Add Blob Manage for superusers only
   const navItems = user?.is_superuser
     ? [
         ...baseNavItems,
@@ -84,7 +84,7 @@ export default function Sidebar({ isOpen, setIsOpen, mobileOpen }) {
         </nav>
       </div>
 
-      {/* 👤 User Profile */}
+      {/* User Profile */}
       {user && (
         <div
           onClick={() => navigate("/profile")}

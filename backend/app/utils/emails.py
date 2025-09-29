@@ -51,7 +51,7 @@ def send_verification_email(background_tasks: BackgroundTasks | None, to_email: 
     body = f"Please verify your email: {verify_link}"
     html = f"""
     <div style="font-family: Arial, sans-serif; padding: 20px;">
-      <h2 style="color:#4F46E5;">Welcome to Scoping Bot 🎉</h2>
+      <h2 style="color:#4F46E5;">Welcome to Scoping Bot </h2>
       <p>Hi there,</p>
       <p>Thank you for signing up! Please click the button below to verify your email address:</p>
       <a href="{verify_link}" 

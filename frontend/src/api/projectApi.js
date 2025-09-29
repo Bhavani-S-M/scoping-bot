@@ -10,9 +10,7 @@ const appendIfPresent = (formData, key, value) => {
 };
 
 const projectApi = {
-  // -------------------------------
   // Projects
-  // -------------------------------
   getProjects: () => api.get("/projects"),
   getProject: (id) => api.get(`/projects/${id}`),
 
@@ -58,9 +56,7 @@ const projectApi = {
       headers: { "Content-Type": "application/json" },
     }),
 
-  // -------------------------------
   // Blob helpers (URLs only)
-  // -------------------------------
   getDownloadUrl: (filePath, base = "projects") =>
     `${api.defaults.baseURL}/blobs/download/${filePath}?base=${base}`,
 

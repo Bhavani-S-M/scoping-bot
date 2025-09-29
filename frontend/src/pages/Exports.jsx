@@ -2,8 +2,9 @@ import { useParams, Link, useLocation } from "react-router-dom";
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useProjects } from "../contexts/ProjectContext";
 import { useExport } from "../contexts/ExportContext";
-import exportApi from "../api/exportApi";
+
 import projectApi from "../api/projectApi";
+import exportApi, { safeFileName } from "../api/exportApi";
 import {
   ArrowLeft,
   FileSpreadsheet,
@@ -13,6 +14,8 @@ import {
   Loader2,
   CheckCircle2,
   Download,
+  Package,
+  XCircle,
 } from "lucide-react";
 import { Document, Page, pdfjs } from "react-pdf";
 import "react-pdf/dist/Page/AnnotationLayer.css";
@@ -20,6 +23,8 @@ import "react-pdf/dist/Page/TextLayer.css";
 import workerSrc from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { toast } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
+import JSZip from "jszip";
+import { saveAs } from "file-saver";
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerSrc;
 
@@ -75,6 +80,38 @@ export default function Exports() {
 
   const cachedPdfBlobRef = useRef(null);
   const lastPdfKeyRef = useRef("");
+
+  // --- Download states (progress + cancel) ---
+  const [downloadState, setDownloadState] = useState({
+    json: { loading: false, progress: 0, controller: null },
+    excel: { loading: false, progress: 0, controller: null },
+    pdf: { loading: false, progress: 0, controller: null },
+    all: { loading: false, progress: 0, controller: null },
+  });
+
+  const startDownload = (key, controller) =>
+    setDownloadState((s) => ({
+      ...s,
+      [key]: { ...s[key], loading: true, progress: 0, controller },
+    }));
+
+  const updateProgress = (key, percent) =>
+    setDownloadState((s) => ({
+      ...s,
+      [key]: { ...s[key], progress: percent },
+    }));
+
+  const finishDownload = (key) =>
+    setDownloadState((s) => ({
+      ...s,
+      [key]: { ...s[key], loading: false, progress: 100, controller: null },
+    }));
+
+  const resetDownload = (key) =>
+    setDownloadState((s) => ({
+      ...s,
+      [key]: { loading: false, progress: 0, controller: null },
+    }));
 
   // Load project
   useEffect(() => {
@@ -231,44 +268,112 @@ export default function Exports() {
     }
   };
 
-  const downloadBlob = (blob, filename) => {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
+  // -------- Individual Downloads with Progress + Cancel --------
+  const downloadFile = async (key, fn, filename) => {
+    const controller = new AbortController();
+    startDownload(key, controller);
 
-  const handleDownloadPdf = async () => {
     try {
-      const blob = await exportApi.exportToPdf(id);
-      downloadBlob(blob, `project_${id}.pdf`);
-    } catch {
-      toast.error(" Failed to download final PDF.");
+      const blob = await fn({
+        signal: controller.signal,
+        onDownloadProgress: (e) => {
+          if (e.total) {
+            const percent = Math.round((e.loaded * 100) / e.total);
+            updateProgress(key, percent);
+          }
+        },
+      });
+      if (!blob || blob.size === 0) throw new Error("Empty file");
+
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+
+      finishDownload(key);
+      toast.success(`${filename} downloaded `);
+    } catch (err) {
+      if (controller.signal.aborted) {
+        toast.info(`${filename} download cancelled`);
+      } else {
+        console.error(err);
+        toast.error(`Failed to download ${filename}`);
+      }
+      resetDownload(key);
     }
   };
 
-  const handleDownloadExcel = async () => {
-    try {
-      const blob = await exportApi.exportToExcel(id);
-      downloadBlob(blob, `project_${id}.xlsx`);
-    } catch {
-      toast.error(" Failed to download final Excel.");
-    }
-  };
-
-  const handleDownloadJson = async () => {
-    try {
-      const data = await exportApi.exportToJson(id);
-      const blob = new Blob([JSON.stringify(data, null, 2)], {
+  const handleDownloadJson = () =>
+  downloadFile(
+    "json",
+    async (opts) => {
+      const data = await exportApi.exportToJson(id, opts);
+      return new Blob([JSON.stringify(data, null, 2)], {
         type: "application/json",
       });
-      downloadBlob(blob, `project_${id}.json`);
-    } catch {
-      toast.error(" Failed to download final JSON.");
+    },
+    `project_${id}.json`
+  );
+
+
+  const handleDownloadExcel = () =>
+    downloadFile("excel", (opts) => exportApi.exportToExcel(id, opts), `project_${id}.xlsx`);
+
+  const handleDownloadPdf = () =>
+    downloadFile("pdf", (opts) => exportApi.exportToPdf(id, opts), `project_${id}.pdf`);
+
+  // -------- ZIP Download --------
+  const handleDownloadAll = async () => {
+    const controller = new AbortController();
+    startDownload("all", controller);
+
+    try {
+      const zip = new JSZip();
+
+      // JSON
+      const jsonData = await exportApi.exportToJson(id, { signal: controller.signal });
+      zip.file(`project_${id}.json`, JSON.stringify(jsonData, null, 2));
+
+      // Excel
+      const excelBlob = await exportApi.exportToExcel(id, {
+        signal: controller.signal,
+        onDownloadProgress: (e) => {
+          if (e.total) updateProgress("all", Math.round((e.loaded * 100) / e.total));
+        },
+      });
+      zip.file(`project_${id}.xlsx`, excelBlob);
+
+      // PDF
+      const pdfBlob = await exportApi.exportToPdf(id, { signal: controller.signal });
+      zip.file(`project_${id}.pdf`, pdfBlob);
+
+      const content = await zip.generateAsync({ type: "blob" });
+      saveAs(content, `project_${id}_exports.zip`);
+
+      finishDownload("all");
+      toast.success("All files downloaded ");
+    } catch (err) {
+      if (controller.signal.aborted) {
+        toast.info("Download all cancelled");
+      } else {
+        console.error("Download all failed:", err);
+        toast.error("Failed to download all ");
+      }
+      resetDownload("all");
     }
   };
+
+  // 🔹 ProgressBar Component
+  const ProgressBar = ({ percent }) => (
+    <div className="w-32 h-2 bg-gray-200 rounded">
+      <div
+        className="h-2 bg-emerald-500 rounded transition-all"
+        style={{ width: `${percent}%` }}
+      ></div>
+    </div>
+  );
 
   return (
     <div className="space-y-6">
@@ -280,7 +385,7 @@ export default function Exports() {
       </Link>
 
       <h1 className="text-2xl font-bold text-primary">
-         Export Project {project ? project.name : "…"}
+        Export Project {project ? project.name : "…"}
       </h1>
 
       {showSuccessBanner && (
@@ -321,7 +426,7 @@ export default function Exports() {
           ) : (
             <p className="text-emerald-600 text-sm mt-2">JSON looks valid.</p>
           )}
-          <div className="mt-4 flex gap-3 flex-wrap">
+          <div className="mt-4 flex gap-3 flex-wrap items-center">
             <button
               onClick={handleFinalize}
               disabled={!parsedDraft || loading}
@@ -343,18 +448,40 @@ export default function Exports() {
             </button>
 
             {isFinalized && (
-              <button
-                onClick={handleDownloadJson}
-                className="px-4 py-2 rounded-lg bg-primary text-white inline-flex items-center gap-2"
-              >
-                <Download className="w-5 h-5" /> Download Final JSON
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleDownloadJson}
+                  disabled={downloadState.json.loading}
+                  className="px-4 py-2 rounded-lg bg-primary text-white inline-flex items-center gap-2"
+                >
+                  {downloadState.json.loading ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin" /> JSON
+                    </>
+                  ) : (
+                    <>
+                      <Download className="w-5 h-5" /> Download JSON
+                    </>
+                  )}
+                </button>
+                {downloadState.json.loading && (
+                  <>
+                    <ProgressBar percent={downloadState.json.progress} />
+                    <button
+                      onClick={() => downloadState.json.controller?.abort()}
+                      className="px-3 py-2 bg-red-500 text-white rounded-lg flex items-center gap-1"
+                    >
+                      <XCircle className="w-4 h-4" /> Cancel
+                    </button>
+                  </>
+                )}
+              </div>
             )}
           </div>
         </div>
       )}
 
-      {/* Excel */}
+            {/* Excel */}
       {activeTab === "excel" && (
         <div className="space-y-4">
           {parsedDraft && (
@@ -415,10 +542,7 @@ export default function Exports() {
                             const val = String(cell || "").toLowerCase();
                             if (val.includes("complete"))
                               statusColor = "bg-green-100 text-green-800";
-                            else if (
-                              val.includes("progress") ||
-                              val.includes("ongoing")
-                            )
+                            else if (val.includes("progress") || val.includes("ongoing"))
                               statusColor = "bg-yellow-100 text-yellow-800";
                             else statusColor = "bg-gray-100 text-gray-600";
                           }
@@ -458,17 +582,40 @@ export default function Exports() {
           )}
 
           {isFinalized && (
-            <button
-              onClick={handleDownloadExcel}
-              className="px-4 py-2 rounded-lg bg-primary text-white inline-flex items-center gap-2"
-            >
-              <Download className="w-5 h-5" /> Download Final Excel
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleDownloadExcel}
+                disabled={downloadState.excel.loading}
+                className="px-4 py-2 rounded-lg bg-primary text-white inline-flex items-center gap-2"
+              >
+                {downloadState.excel.loading ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" /> Excel
+                  </>
+                ) : (
+                  <>
+                    <Download className="w-5 h-5" /> Download Excel
+                  </>
+                )}
+              </button>
+              {downloadState.excel.loading && (
+                <>
+                  <ProgressBar percent={downloadState.excel.progress} />
+                  <button
+                    onClick={() => downloadState.excel.controller?.abort()}
+                    className="px-3 py-2 bg-red-500 text-white rounded-lg flex items-center gap-1"
+                  >
+                    <XCircle className="w-4 h-4" /> Cancel
+                  </button>
+                </>
+              )}
+            </div>
           )}
         </div>
       )}
 
       {/* PDF */}
+            {/* PDF */}
       {activeTab === "pdf" && (
         <div className="space-y-4">
           {previewPdfUrl ? (
@@ -491,12 +638,66 @@ export default function Exports() {
           )}
 
           {isFinalized && (
-            <button
-              onClick={handleDownloadPdf}
-              className="px-4 py-2 rounded-lg bg-primary text-white inline-flex items-center gap-2"
-            >
-              <Download className="w-5 h-5" /> Download Final PDF
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleDownloadPdf}
+                disabled={downloadState.pdf.loading}
+                className="px-4 py-2 rounded-lg bg-primary text-white inline-flex items-center gap-2"
+              >
+                {downloadState.pdf.loading ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" /> PDF
+                  </>
+                ) : (
+                  <>
+                    <Download className="w-5 h-5" /> Download PDF
+                  </>
+                )}
+              </button>
+              {downloadState.pdf.loading && (
+                <>
+                  <ProgressBar percent={downloadState.pdf.progress} />
+                  <button
+                    onClick={() => downloadState.pdf.controller?.abort()}
+                    className="px-3 py-2 bg-red-500 text-white rounded-lg flex items-center gap-1"
+                  >
+                    <XCircle className="w-4 h-4" /> Cancel
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Download All */}
+      {isFinalized && (
+        <div className="pt-6 flex items-center gap-2">
+          <button
+            onClick={handleDownloadAll}
+            disabled={downloadState.all.loading}
+            className="px-6 py-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold inline-flex items-center gap-2"
+          >
+            {downloadState.all.loading ? (
+              <>
+                <Loader2 className="w-5 h-5 animate-spin" /> ZIP
+              </>
+            ) : (
+              <>
+                <Package className="w-5 h-5" /> Download All (ZIP)
+              </>
+            )}
+          </button>
+          {downloadState.all.loading && (
+            <>
+              <ProgressBar percent={downloadState.all.progress} />
+              <button
+                onClick={() => downloadState.all.controller?.abort()}
+                className="px-3 py-2 bg-red-500 text-white rounded-lg flex items-center gap-1"
+              >
+                <XCircle className="w-4 h-4" /> Cancel
+              </button>
+            </>
           )}
         </div>
       )}

@@ -39,17 +39,14 @@ const authApi = {
   resetPassword: (token, password) =>
     api.post("/auth/reset-password", { token, password }),
 
-  // ✉️ Email Verification
-  // -------------------------------
+  // Email Verification
   requestVerifyToken: (email) =>
     api.post("/auth/request-verify-token", { email }),
   verifyEmail: (token) => api.post("/auth/verify", { token }),
 
-  // -------------------------------
-  // 👤 User Management
-  // -------------------------------
+  // User Management
   getMe: () => api.get("/users/me"),
-  updateMe: (data) => api.patch("/users/me", data),        // ✅ NEW
+  updateMe: (data) => api.patch("/users/me", data), 
   getUser: (id) => api.get(`/users/${id}`),
   updateUser: (id, data) => api.patch(`/users/${id}`, data),
   deleteUser: (id) => api.delete(`/users/${id}`),

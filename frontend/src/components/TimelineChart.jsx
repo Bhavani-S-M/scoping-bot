@@ -11,8 +11,8 @@ export default function TimelineChart({ timeline }) {
   // Transform timeline [{ name, start, end }] → stacked data
   const data = timeline.map((t) => ({
     name: t.name,
-    offset: t.start - 1, // invisible offset before task starts
-    duration: t.end - t.start + 1, // actual visible duration
+    offset: t.start - 1, 
+    duration: t.end - t.start + 1, 
   }));
 
   return (

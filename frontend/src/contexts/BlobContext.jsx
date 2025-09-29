@@ -36,7 +36,7 @@ export const BlobProvider = ({ children }) => {
   const uploadFile = async (file, folder = "", base = activeBase) => {
     try {
       const { data } = await blobApi.uploadFile(file, folder, base);
-      await loadExplorer(base); // auto refresh
+      await loadExplorer(base); 
       return data;
     } catch (err) {
       setError("File upload failed");
@@ -47,7 +47,7 @@ export const BlobProvider = ({ children }) => {
   const uploadFolder = async (files, folder = "", base = activeBase) => {
     try {
       const { data } = await blobApi.uploadFolder(files, folder, base);
-      await loadExplorer(base); // auto refresh
+      await loadExplorer(base); 
       return data;
     } catch (err) {
       setError("Folder upload failed");
@@ -83,7 +83,7 @@ export const BlobProvider = ({ children }) => {
   const deleteFile = async (name, base = activeBase) => {
     try {
       await blobApi.deleteFile(name, base);
-      await loadExplorer(base); // auto refresh
+      await loadExplorer(base); 
       return name;
     } catch {
       setError("File delete failed");

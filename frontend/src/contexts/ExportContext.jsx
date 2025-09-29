@@ -37,7 +37,7 @@ export const ExportProvider = ({ children }) => {
     try {
       return await handleExport(exportApi.exportToJson, id);
     } catch (err) {
-      if (err?.response?.status === 400) return null; // not finalized
+      if (err?.response?.status === 400) return null; 
       throw err;
     }
   };

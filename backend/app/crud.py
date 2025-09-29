@@ -59,10 +59,10 @@ def delete_project(db: Session, db_project: models.Project) -> bool:
     for f in db_project.files:
         try:
             if f.file_path:
-                blob_utils.delete_blob(f.file_path)  # ✅ already includes "projects/"
+                blob_utils.delete_blob(f.file_path)
                 logger.info(f"🗑 Deleted blob: {f.file_path}")
         except Exception as e:
-            logger.warning(f"⚠️ Failed to delete blob {f.file_path}: {e}")
+            logger.warning(f" Failed to delete blob {f.file_path}: {e}")
 
     db.delete(db_project)
     db.commit()

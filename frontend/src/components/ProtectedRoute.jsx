@@ -26,7 +26,7 @@ export default function ProtectedRoute({ children, requireSuperuser = false }) {
           setIsAuthenticated(false);
         }
       } catch (err) {
-        console.error("❌ Auth check failed:", err);
+        console.error("Auth check failed:", err);
         setIsAuthenticated(false);
       } finally {
         setLoading(false);

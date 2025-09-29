@@ -126,10 +126,10 @@ export const ProjectProvider = ({ children }) => {
     try {
       let scopeToUse = draftScope;
       try {
-        scopeToUse = await exportApi.exportToJson(id); // try finalized
+        scopeToUse = await exportApi.exportToJson(id); 
       } catch (err) {
         if (err?.response?.status === 400) {
-          scopeToUse = draftScope || {}; // fallback
+          scopeToUse = draftScope || {}; 
         } else throw err;
       }
 

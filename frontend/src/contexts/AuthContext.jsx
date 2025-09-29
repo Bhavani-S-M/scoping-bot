@@ -97,7 +97,7 @@ export const AuthProvider = ({ children }) => {
         logout,
         fetchUser,
         refreshAccessToken,
-        updateUserProfile,   // ✅ now exposed
+        updateUserProfile,  
         loading,
         error,
       }}
