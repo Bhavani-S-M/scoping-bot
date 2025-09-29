@@ -5,6 +5,7 @@ from docx import Document
 from pptx import Presentation
 import openpyxl
 from PIL import Image
+import anyio, asyncio
 import pytesseract
 from azure.search.documents.models import VectorizedQuery
 from typing import Dict, Any, List
@@ -65,72 +66,74 @@ def _extract_json(s: str) -> dict:
                 return {}
         return {}
 
-def _extract_text_from_files(files: List[ProjectFile]) -> str:
-    chunks = []
-    for f in files:
+async def _extract_text_from_files(files: List[dict]) -> str:
+    """
+    Extracts text content from a list of dicts with {file_name, file_path}.
+    - Runs blocking parsers in a threadpool.
+    - If one file fails, logs the error and continues with others.
+    """
+    results: List[str] = []
+
+    async def _extract_single(f: dict) -> None:
         try:
-            blob_bytes = azure_blob.download_bytes(f.file_path)
-            suffix = os.path.splitext(f.file_name)[-1].lower()
-            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-                tmp.write(blob_bytes)
-                tmp_path = tmp.name
+            blob_bytes = await azure_blob.download_bytes(f["file_path"])
+            suffix = os.path.splitext(f["file_name"])[-1].lower()
 
-            content = ""
-            if suffix in [".pdf"]:
+            def process_file() -> str:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                    tmp.write(blob_bytes)
+                    tmp_path = tmp.name
+
+                content = ""
                 try:
-                    content = extract_pdf_text(tmp_path)
-                except Exception as e:
-                    logger.warning(f"PDF extract failed {f.file_name}: {e}")
+                    if suffix == ".pdf":
+                        content = extract_pdf_text(tmp_path)
+                    elif suffix == ".docx":
+                        doc = Document(tmp_path)
+                        content = "\n".join(p.text for p in doc.paragraphs)
+                    elif suffix == ".pptx":
+                        prs = Presentation(tmp_path)
+                        content = "\n".join(
+                            shape.text for slide in prs.slides if hasattr(shape, "text")
+                        )
+                    elif suffix in [".xlsx", ".xlsm"]:
+                        wb = openpyxl.load_workbook(tmp_path)
+                        sheet = wb.active
+                        content = "\n".join(
+                            " ".join(str(cell) if cell else "" for cell in row)
+                            for row in sheet.iter_rows(values_only=True)
+                        )
+                    elif suffix in [".png", ".jpg", ".jpeg", ".tiff"]:
+                        img = Image.open(tmp_path)
+                        content = pytesseract.image_to_string(img)
+                    else:
+                        with open(tmp_path, "r", encoding="utf-8", errors="ignore") as fh:
+                            content = fh.read()
+                finally:
+                    try:
+                        os.remove(tmp_path)
+                    except Exception:
+                        pass
 
-            elif suffix in [".docx"]:
-                try:
-                    doc = Document(tmp_path)
-                    content = "\n".join([p.text for p in doc.paragraphs])
-                except Exception as e:
-                    logger.warning(f"DOCX extract failed {f.file_name}: {e}")
+                return content.strip()
 
-            elif suffix in [".pptx"]:
-                try:
-                    prs = Presentation(tmp_path)
-                    content = "\n".join(
-                        [shape.text for slide in prs.slides for shape in slide.shapes if hasattr(shape, "text")]
-                    )
-                except Exception as e:
-                    logger.warning(f"PPTX extract failed {f.file_name}: {e}")
+            text = await anyio.to_thread.run_sync(process_file)
 
-            elif suffix in [".xlsx", ".xlsm"]:
-                try:
-                    wb = openpyxl.load_workbook(tmp_path)
-                    sheet = wb.active
-                    rows = []
-                    for row in sheet.iter_rows(values_only=True):
-                        rows.append(" ".join([str(cell) if cell else "" for cell in row]))
-                    content = "\n".join(rows)
-                except Exception as e:
-                    logger.warning(f"Excel extract failed {f.file_name}: {e}")
-
-            elif suffix in [".png", ".jpg", ".jpeg", ".tiff"]:
-                try:
-                    img = Image.open(tmp_path)
-                    content = pytesseract.image_to_string(img)
-                except Exception as e:
-                    logger.warning(f"OCR failed {f.file_name}: {e}")
-
+            if text:
+                results.append(text)
             else:
-                # fallback: assume plain text
-                try:
-                    with open(tmp_path, "r", encoding="utf-8", errors="ignore") as fh:
-                        content = fh.read()
-                except Exception:
-                    pass
+                logger.warning(f"⚠️ Extracted no text from {f['file_name']}")
 
-            if content and content.strip():
-                chunks.append(content)
-
-            os.remove(tmp_path)
         except Exception as e:
-            logger.warning(f"Failed to extract {f.file_name}: {e}")
-    return "\n\n".join(chunks)
+            logger.warning(f"❌ Failed to extract {f.get('file_name')} (path={f.get('file_path')}): {e}")
+
+    # Run in parallel using TaskGroup
+    async with anyio.create_task_group() as tg:
+        for f in files:
+            tg.start_soon(_extract_single, f)
+
+    return "\n\n".join(results)
+
 
 
 def _parse_date(s: str) -> datetime | None:
@@ -500,25 +503,34 @@ def _clean_scope(data: Dict[str, Any], project=None) -> Dict[str, Any]:
 
 
 
-def generate_project_scope(project) -> dict:
+async def generate_project_scope(project) -> dict:
     if client is None or deployment is None:
         logger.warning("Azure OpenAI not configured")
         return {}
 
-    # ---- Model + tokenizer setup ----
-    model_name = "gpt-4o"  # Azure GPT-4o deployment
+    model_name = "gpt-4o"
     tokenizer = tiktoken.encoding_for_model(model_name)
     context_limit = 128000
-    max_total_tokens = context_limit - 4000  # leave 4k headroom for system + completion
+    max_total_tokens = context_limit - 4000
     used_tokens = 0
 
     # ---------- Extract RFP ----------
     rfp_text = ""
     try:
+        files: List[dict] = []
         if getattr(project, "files", None):
-            rfp_text = _extract_text_from_files(project.files)
+            try:
+                # ✅ convert ORM objects → plain dicts
+                files = [{"file_name": f.file_name, "file_path": f.file_path} for f in project.files]
+            except Exception as e:
+                logger.warning(f"⚠️ Could not access project.files: {e}")
+                files = []
+
+        if files:
+            rfp_text = await _extract_text_from_files(files)
+
     except Exception as e:
-        logger.warning(f"File extraction failed: {e}")
+        logger.warning(f"File extraction for project {getattr(project, 'id', None)}")
 
     # Trim RFP text
     rfp_tokens = tokenizer.encode(rfp_text or "")
@@ -538,12 +550,9 @@ def generate_project_scope(project) -> dict:
         str(getattr(project, "duration", "")) if getattr(project, "duration", None) else None,
     ]
 
-    # Filter out empty/None values and join with a space
     fallback_text = " ".join(f for f in fallback_fields if f and str(f).strip())
 
-    # After extracting file + fallback text
     if not (rfp_text and rfp_text.strip()) and not (fallback_text and fallback_text.strip()):
-        logger.warning("No meaningful RFP text or project fields provided — returning skeleton scope")
         return {
             "overview": {
                 "Project Name": "Untitled Project",
@@ -557,6 +566,7 @@ def generate_project_scope(project) -> dict:
             "activities": [],
             "resourcing_plan": []
         }
+
     kb_results = _rag_retrieve(rfp_text or fallback_text)
 
     kb_chunks = []
@@ -582,10 +592,12 @@ def generate_project_scope(project) -> dict:
     prompt = _build_scope_prompt(rfp_text, kb_chunks, project, model_name=model_name)
 
     try:
-        resp = client.chat.completions.create(
-            model=deployment,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.3,
+        resp = await anyio.to_thread.run_sync(
+            lambda: client.chat.completions.create(
+                model=deployment,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+            )
         )
         raw = _extract_json(resp.choices[0].message.content.strip())
         return _clean_scope(raw, project=project)

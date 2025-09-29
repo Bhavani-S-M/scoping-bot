@@ -1,17 +1,16 @@
-import uuid, os, json, re, logging
+import uuid, json, re, logging
 from typing import Any, Dict, Optional
 from app.utils import azure_blob
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import models
 from app import crud as projects
-from app.config.database import get_db
+from app.config.database import get_async_session
 from app.auth.router import fastapi_users
-from app.utils import export
-from app.utils import scope_engine 
+from app.utils import export, scope_engine
 
 current_active_user = fastapi_users.current_user(active=True)
 
@@ -19,19 +18,22 @@ router = APIRouter(prefix="/projects/{project_id}/export", tags=["Export"])
 
 
 # ---------- Helpers ----------
-def _get_project(project_id: uuid.UUID, user_id: uuid.UUID, db: Session) -> models.Project:
-    project = projects.get_project(db, project_id=project_id, owner_id=user_id)
+async def _get_project(project_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSession) -> models.Project:
+    project = await projects.get_project(db, project_id=project_id, owner_id=user_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found or access denied")
+
+    # ✅ ensure files relationship is preloaded (avoid greenlet_spawn bug)
+    await db.refresh(project, attribute_names=["files"])
     return project
 
 
-def _load_finalized_scope(project: models.Project) -> Optional[Dict[str, Any]]:
+async def _load_finalized_scope(project: models.Project) -> Optional[Dict[str, Any]]:
     """Try to fetch finalized scope JSON from blob storage."""
-    for f in project.files:
+    for f in project.files:  # safe because files preloaded above
         if f.file_name == "finalized_scope.json":
             try:
-                blob_bytes = azure_blob.download_bytes(f.file_path)
+                blob_bytes = await azure_blob.download_bytes(f.file_path)
                 return json.loads(blob_bytes.decode("utf-8"))
             except Exception as e:
                 logging.warning(f"Failed to load finalized scope from blob {f.file_path}: {e}")
@@ -43,40 +45,42 @@ def _safe_filename(name: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_-]+", "_", (name or "").strip().lower())
 
 
-def _ensure_scope(project: models.Project) -> Dict[str, Any]:
+async def _ensure_scope(project: models.Project) -> Dict[str, Any]:
     """Return finalized scope if available, else generate draft scope."""
-    scope = _load_finalized_scope(project)
+    scope = await _load_finalized_scope(project)
     if not scope:
-        raw_scope = scope_engine.generate_project_scope(project)
+        raw_scope = await scope_engine.generate_project_scope(project)
         scope = export.generate_json_data(raw_scope or {})
     return scope
 
 
-# PREVIEW EXPORTS (no DB)
+# -------------------------
+# PREVIEW EXPORTS (no DB write)
+# -------------------------
 
 @router.post("/preview/json")
-def preview_json_from_scope(
+async def preview_json_from_scope(
     project_id: uuid.UUID,
     scope: Optional[Dict[str, Any]] = None,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_session),
     current_user: models.User = Depends(current_active_user),
 ):
-    project = _get_project(project_id, current_user.id, db)
-    finalized = _load_finalized_scope(project)
+    project = await _get_project(project_id, current_user.id, db)
+    finalized = await _load_finalized_scope(project)
     if (not scope or len(scope) == 0) and finalized:
         return finalized
     return export.generate_json_data(scope or {})
 
 
 @router.post("/preview/excel")
-def preview_excel_from_scope(
+async def preview_excel_from_scope(
     project_id: uuid.UUID,
     scope: Optional[Dict[str, Any]] = None,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_session),
     current_user: models.User = Depends(current_active_user),
 ):
-    project = _get_project(project_id, current_user.id, db)
-    finalized = _load_finalized_scope(project)
+    project = await _get_project(project_id, current_user.id, db)
+    finalized = await _load_finalized_scope(project)
     normalized = export.generate_json_data(scope or {}) if not finalized else finalized
     file = export.generate_xlsx(normalized)
     safe_name = _safe_filename(normalized.get("overview", {}).get("Project Name") or f"project_{project_id}")
@@ -88,14 +92,14 @@ def preview_excel_from_scope(
 
 
 @router.post("/preview/pdf")
-def preview_pdf_from_scope(
+async def preview_pdf_from_scope(
     project_id: uuid.UUID,
     scope: Optional[Dict[str, Any]] = None,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_session),
     current_user: models.User = Depends(current_active_user),
 ):
-    project = _get_project(project_id, current_user.id, db)
-    finalized = _load_finalized_scope(project)
+    project = await _get_project(project_id, current_user.id, db)
+    finalized = await _load_finalized_scope(project)
     normalized = export.generate_json_data(scope or {}) if not finalized else finalized
     file = export.generate_pdf(normalized)
     safe_name = _safe_filename(normalized.get("overview", {}).get("Project Name") or f"project_{project_id}")
@@ -106,27 +110,29 @@ def preview_pdf_from_scope(
     )
 
 
-# FINALIZED EXPORTS (with fallback)
+# -------------------------
+# FINALIZED EXPORTS
+# -------------------------
 
 @router.get("/json")
-def export_project_json(
+async def export_project_json(
     project_id: uuid.UUID,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_session),
     current_user: models.User = Depends(current_active_user),
 ):
-    project = _get_project(project_id, current_user.id, db)
-    scope = _ensure_scope(project)
+    project = await _get_project(project_id, current_user.id, db)
+    scope = await _ensure_scope(project)
     return scope
 
 
 @router.get("/excel")
-def export_project_excel(
+async def export_project_excel(
     project_id: uuid.UUID,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_session),
     current_user: models.User = Depends(current_active_user),
 ):
-    project = _get_project(project_id, current_user.id, db)
-    scope = _ensure_scope(project)
+    project = await _get_project(project_id, current_user.id, db)
+    scope = await _ensure_scope(project)
     normalized = export.generate_json_data(scope or {})
     file = export.generate_xlsx(normalized)
     safe_name = _safe_filename(project.name or f"project_{project.id}")
@@ -138,13 +144,13 @@ def export_project_excel(
 
 
 @router.get("/pdf")
-def export_project_pdf(
+async def export_project_pdf(
     project_id: uuid.UUID,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_session),
     current_user: models.User = Depends(current_active_user),
 ):
-    project = _get_project(project_id, current_user.id, db)
-    scope = _ensure_scope(project)
+    project = await _get_project(project_id, current_user.id, db)
+    scope = await _ensure_scope(project)
     normalized = export.generate_json_data(scope or {})
     file = export.generate_pdf(normalized)
     safe_name = _safe_filename(project.name or f"project_{project.id}")

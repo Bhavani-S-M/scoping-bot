@@ -4,15 +4,11 @@ from fastapi.staticfiles import StaticFiles
 import os
 
 from app.config import config
-from app.config.database import engine, Base
+from app.config.database import async_engine, Base  # use async engine only
 from app import models
 from app.auth import router as auth_router
 from app.routers import projects, exports, blob
-
-# ---------- DB Init ----------
-print("Creating database tables...")
-Base.metadata.create_all(bind=engine)
-print("Database tables created.")
+from app.utils import azure_blob  # 👈 import blob utils
 
 # ---------- App Init ----------
 app = FastAPI(
@@ -21,8 +17,20 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# ---------- CORS ----------
+# ---------- Startup ----------
+@app.on_event("startup")
+async def on_startup():
+    # Create DB tables
+    print("Creating database tables...")
+    async with async_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    print("Database tables created.")
 
+    # Ensure Blob container exists
+    await azure_blob.init_container()
+    print("Azure Blob container ready.")
+
+# ---------- CORS ----------
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -31,18 +39,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Static Files
+# ---------- Static Files ----------
 UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
-# Routers
+# ---------- Routers ----------
 app.include_router(auth_router)
 app.include_router(projects.router)
 app.include_router(exports.router)
 app.include_router(blob.router)
 
-# Health Check 
+# ---------- Health Check ----------
 @app.get("/")
 def root():
     return {
