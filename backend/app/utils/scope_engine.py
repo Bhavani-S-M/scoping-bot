@@ -67,11 +67,6 @@ def _extract_json(s: str) -> dict:
         return {}
 
 async def _extract_text_from_files(files: List[dict]) -> str:
-    """
-    Extracts text content from a list of dicts with {file_name, file_path}.
-    - Runs blocking parsers in a threadpool.
-    - If one file fails, logs the error and continues with others.
-    """
     results: List[str] = []
 
     async def _extract_single(f: dict) -> None:
@@ -93,9 +88,13 @@ async def _extract_text_from_files(files: List[dict]) -> str:
                         content = "\n".join(p.text for p in doc.paragraphs)
                     elif suffix == ".pptx":
                         prs = Presentation(tmp_path)
-                        content = "\n".join(
-                            shape.text for slide in prs.slides if hasattr(shape, "text")
-                        )
+                        texts = []
+                        for slide in prs.slides:
+                            for shape in slide.shapes:
+                                if hasattr(shape, "text"):
+                                    texts.append(shape.text)
+                        content = "\n".join(texts)
+
                     elif suffix in [".xlsx", ".xlsm"]:
                         wb = openpyxl.load_workbook(tmp_path)
                         sheet = wb.active
@@ -122,10 +121,10 @@ async def _extract_text_from_files(files: List[dict]) -> str:
             if text:
                 results.append(text)
             else:
-                logger.warning(f"⚠️ Extracted no text from {f['file_name']}")
+                logger.warning(f"Extracted no text from {f['file_name']}")
 
         except Exception as e:
-            logger.warning(f"❌ Failed to extract {f.get('file_name')} (path={f.get('file_path')}): {e}")
+            logger.warning(f" Failed to extract {f.get('file_name')} (path={f.get('file_path')}): {e}")
 
     # Run in parallel using TaskGroup
     async with anyio.create_task_group() as tg:
@@ -340,12 +339,15 @@ def _build_scope_prompt(rfp_text: str, kb_chunks: List[str], project=None, model
         "}\n\n"
         "Rules:\n"
         "start date of first activity should be from today date"
-        "- `Owner` is the person responsible for managing the activity (for display only — not used for costing).\n"
-        "- `Depends on` are the people or roles who will execute that activity (used for costing).\n"
+        "-`complexity` should be simple or medium or large.\n "
+        "-`Duration` in months. and should less than 1-24 months \n"
+        "-` story' is user story about that activity.\n"
+        "- `Owner` is person responsible for managing that particular activity give me only roles not names (used for costing) .\n"
+        "- `Depends on` are the roles who will execute that activity.only roles not names (used for costing).\n"
         "- Do NOT include the Owner again inside `Depends on`. They must be distinct.\n"
         "- Only if `Depends on` is completely missing, then use the Owner as a fallback.\n"
         "- `Duration` is number of months. Use real month names (Jan 2025, Feb 2025,...)\n"
-        "- Use 5–10 activities and 3–5 resources.\n"
+        "- Use 5–10 activities and 3–10 resources.\n"
         "- Activities use months (Effort Months).\n"
         "- Use small integer IDs starting from 1.\n"
         "- Use USD for rate.\n"
@@ -369,9 +371,7 @@ def _clean_scope(data: Dict[str, Any], project=None) -> Dict[str, Any]:
     missing_roles: Dict[str, float] = {}
     id_to_owner = {str(a.get("id") or a.get("ID")): a.get("Owner") for a in data.get("activities") or []}
 
-    # =====================================================
     # ACTIVITIES
-    # =====================================================
     activities = []
     for idx, a in enumerate(data.get("activities", []) or [], start=1):
         a["id"] = idx
@@ -382,7 +382,7 @@ def _clean_scope(data: Dict[str, Any], project=None) -> Dict[str, Any]:
         if not a.get("Owner"):
             a["Owner"] = "Unassigned"
 
-        # --- Collect raw Depends on ---
+        # Collect raw Depends on
         dep_raw = a.get("Depends on") or ""
         dep_list = [r.strip() for r in dep_raw.split(",") if r.strip()]
         if not dep_list:
@@ -391,7 +391,7 @@ def _clean_scope(data: Dict[str, Any], project=None) -> Dict[str, Any]:
         # Resolve IDs -> Owners if AI used IDs in Depends on
         dep_list = [id_to_owner.get(d, d) for d in dep_list]
 
-        # --- Merge Owner + Depends into a single set ---
+        # Merge Owner + Depends into a single set
         roles_for_activity = set(dep_list + [a["Owner"]])
 
         normalized_deps = []
@@ -405,7 +405,7 @@ def _clean_scope(data: Dict[str, Any], project=None) -> Dict[str, Any]:
             # Add effort once per unique role
             resource_month_map[normalized] = resource_month_map.get(normalized, 0) + months_effort
 
-            # Keep for cleaned Depends on (skip owner so it doesn’t repeat)
+            # Keep for cleaned Depends on 
             if r != a["Owner"]:
                 normalized_deps.append(normalized)
 
@@ -445,9 +445,7 @@ def _clean_scope(data: Dict[str, Any], project=None) -> Dict[str, Any]:
 
     data["activities"] = activities
 
-    # =====================================================
     # DURATION & MONTH LABELS
-    # =====================================================
     user_duration = int(data.get("overview", {}).get("Duration") or 0)
     months = user_duration if user_duration > 0 else max(
         1, round(((max_end or today) - (min_start or today)).days / 30)
@@ -455,9 +453,7 @@ def _clean_scope(data: Dict[str, Any], project=None) -> Dict[str, Any]:
     base_date = min_start or today
     month_labels = [(base_date + relativedelta(months=i)).strftime("%b %Y") for i in range(months)]
 
-    # =====================================================
     # RESOURCING PLAN (UNIQUE ROLES)
-    # =====================================================
     resourcing_plan = []
     seen_roles = set()
     for rname, total_months in resource_month_map.items():
@@ -486,9 +482,7 @@ def _clean_scope(data: Dict[str, Any], project=None) -> Dict[str, Any]:
     data.setdefault("overview", {})["Duration"] = months
     data["_missing_roles"] = missing_roles
 
-    # =====================================================
     # MERGE USER-PROVIDED PROJECT FIELDS
-    # =====================================================
     if project:
         ov = data.setdefault("overview", {})
         if getattr(project, "name", None):         ov["Project Name"] = project.name
@@ -520,10 +514,10 @@ async def generate_project_scope(project) -> dict:
         files: List[dict] = []
         if getattr(project, "files", None):
             try:
-                # ✅ convert ORM objects → plain dicts
+                # convert ORM objects → plain dicts
                 files = [{"file_name": f.file_name, "file_path": f.file_path} for f in project.files]
             except Exception as e:
-                logger.warning(f"⚠️ Could not access project.files: {e}")
+                logger.warning(f" Could not access project.files: {e}")
                 files = []
 
         if files:

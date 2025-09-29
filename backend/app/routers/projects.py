@@ -1,6 +1,3 @@
-"""
-Project router: handles project CRUD and AI scoping.
-"""
 import uuid, json, logging
 from typing import List, Optional, Dict, Any
 
@@ -15,7 +12,6 @@ from app.config.database import get_async_session
 from app.utils import scope_engine, export, azure_blob
 from app.auth.router import fastapi_users
 
-# Dependency
 get_current_active_user = fastapi_users.current_user(active=True)
 
 logger = logging.getLogger(__name__)
@@ -23,9 +19,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/projects", tags=["Projects"])
 
 
-# -------------------------
 # List Projects
-# -------------------------
 @router.get("", response_model=List[schemas.Project])
 async def list_projects(
     db: AsyncSession = Depends(get_async_session),
@@ -33,16 +27,13 @@ async def list_projects(
 ):
     items = await projects.list_projects(db, owner_id=current_user.id)
 
-    # ✅ Enrich with finalized scope flag (pass db here)
     for p in items:
         p.has_finalized_scope = await projects.has_finalized_scope(db, p.id)
 
     return items
 
 
-# -------------------------
 # Create Project + Auto Scope Preview
-# -------------------------
 @router.post("", response_model=schemas.ProjectCreateResponse, status_code=status.HTTP_201_CREATED)
 async def create_project(
     name: Optional[str] = Form(None),
@@ -86,9 +77,7 @@ async def create_project(
     )
 
 
-# -------------------------
 # Get Project Details
-# -------------------------
 @router.get("/{project_id}", response_model=schemas.Project)
 async def get_project(
     project_id: uuid.UUID,
@@ -99,20 +88,16 @@ async def get_project(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # ✅ Attach blob URLs
     for f in project.files:
         f.download_url = f"/blobs/download/{f.file_path}?base=projects"
         f.preview_url = f"/blobs/preview/{f.file_path}?base=projects"
 
-    # ✅ Add finalized scope flag (pass db here)
     project.has_finalized_scope = await projects.has_finalized_scope(db, project.id)
 
     return project
 
 
-# -------------------------
 # Update Project
-# -------------------------
 @router.put("/{project_id}", response_model=schemas.Project)
 async def update_project(
     project_id: uuid.UUID,
@@ -127,9 +112,7 @@ async def update_project(
     return await projects.update_project(db, db_project, project_update)
 
 
-# -------------------------
 # Delete Project
-# -------------------------
 @router.delete("/{project_id}", response_model=schemas.MessageResponse)
 async def delete_project(
     project_id: uuid.UUID,
@@ -144,9 +127,7 @@ async def delete_project(
     return {"msg": "Project deleted successfully"}
 
 
-# -------------------------
 # Delete All Projects
-# -------------------------
 @router.delete("", response_model=schemas.MessageResponse)
 async def delete_all_projects(
     db: AsyncSession = Depends(get_async_session),
@@ -156,9 +137,7 @@ async def delete_all_projects(
     return {"msg": f"Deleted {count} projects successfully"}
 
 
-# -------------------------
 # Generate Scope
-# -------------------------
 @router.get("/{project_id}/generate_scope", response_model=schemas.GeneratedScopeResponse)
 async def generate_project_scope(
     project_id: uuid.UUID,
@@ -175,9 +154,7 @@ async def generate_project_scope(
     return schemas.GeneratedScopeResponse(**normalized_scope)
 
 
-# -------------------------
 # Finalize Scope
-# -------------------------
 @router.post("/{project_id}/finalize_scope", response_model=schemas.MessageResponse)
 async def finalize_project_scope(
     project_id: uuid.UUID,

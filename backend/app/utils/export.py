@@ -10,16 +10,14 @@ from reportlab.lib.units import cm
 from reportlab.lib import colors
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Table, TableStyle,
-    Spacer, PageBreak
+    Spacer, PageBreak, LongTable
 )
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.graphics.shapes import Drawing, Rect, String
 from reportlab.graphics.charts.piecharts import Pie
 from reportlab.lib.enums import TA_CENTER
 
-# ----------------------------------------------------------------------
-# Theme + Role Rates
-# ----------------------------------------------------------------------
+# Theme 
 THEME = {
     "header_bg": "#BDD7EE",
     "zebra1": "#FFFFFF",
@@ -28,6 +26,7 @@ THEME = {
     "palette": ["#8DA6D7", "#E2DBBB", "#97BAEB", "#F28282", "#B9E7EB", "#E0C0A8"]
 }
 
+# Default Role rate
 ROLE_RATE_MAP: Dict[str, float] = {
     "Backend Developer": 3000.0, "Frontend Developer": 2800.0,
     "QA Analyst": 1800.0, "QA Engineer": 2000.0,
@@ -42,9 +41,7 @@ ROLE_RATE_MAP: Dict[str, float] = {
 IST = timezone(timedelta(hours=5, minutes=30))
 
 
-# ----------------------------------------------------------------------
 # Helpers
-# ----------------------------------------------------------------------
 def _to_float(v, d=0.0):
     try: return float(str(v).replace(",","").strip())
     except: return d
@@ -63,9 +60,7 @@ def _parse_date_safe(val: str, default: datetime | None = None) -> datetime | No
         return default
 
 
-# ----------------------------------------------------------------------
 # Normalize Scope
-# ----------------------------------------------------------------------
 def normalize_scope(scope: Dict[str, Any]) -> Dict[str, Any]:
     import copy
     data = copy.deepcopy(scope or {})
@@ -203,14 +198,12 @@ def normalize_scope(scope: Dict[str, Any]) -> Dict[str, Any]:
     return data
 
 
-# ----------------------------------------------------------------------
 # JSON Export
-# ----------------------------------------------------------------------
 def generate_json_data(scope: Dict[str, Any]) -> Dict[str, Any]:
     return normalize_scope(scope)
 
 
-# ---------- Excel ----------
+# Excel Export
 def generate_xlsx(scope: Dict[str, Any]) -> io.BytesIO:
     try:
         from xlsxwriter.utility import xl_col_to_name
@@ -277,7 +270,7 @@ def generate_xlsx(scope: Dict[str, Any]) -> io.BytesIO:
 
         last_a = len(data.get("activities", [])) + 1
 
-        # ✅ Only add structured table if there are activities
+        # Column Formulas
         if data.get("activities"):
             ws_a.add_table(
                 f"A1:J{last_a}",
@@ -308,7 +301,7 @@ def generate_xlsx(scope: Dict[str, Any]) -> io.BytesIO:
                 }
             )
 
-            # ✅ Only add Gantt chart if valid dates exist
+            # ------- Gantt chart --------
             if starts and ends:
                 gantt = wb.add_chart({"type": "bar", "subtype": "stacked"})
                 gantt.add_series({
@@ -439,13 +432,13 @@ def generate_xlsx(scope: Dict[str, Any]) -> io.BytesIO:
         out.seek(0)
         return out
 
-# ---------- -------PDF ------------------
+# PDF EXPORT
 def generate_pdf(scope: Dict[str, Any]) -> io.BytesIO:
     data = scope or {}
     buf = io.BytesIO()
     W, H = landscape(A4)
     doc = SimpleDocTemplate(
-        buf, pagesize=(W * 1.2, H * 2),
+        buf, pagesize=(W * 1.5, H * 2.5),
         leftMargin=1 * cm, rightMargin=1 * cm,
         topMargin=1 * cm, bottomMargin=1 * cm
     )
@@ -468,7 +461,7 @@ def generate_pdf(scope: Dict[str, Any]) -> io.BytesIO:
     ov = data.get("overview", {})
     if ov:
         ov_rows = [["Field", "Value"]] + [[k, str(v)] for k, v in ov.items()]
-        tbl = Table(ov_rows, colWidths=[120, 700], repeatRows=1)
+        tbl = Table(ov_rows, colWidths=[110, 800], repeatRows=1)
         ts_ov = TableStyle([
             ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(THEME["header_bg"])),
@@ -490,7 +483,7 @@ def generate_pdf(scope: Dict[str, Any]) -> io.BytesIO:
     activities = data.get("activities", [])
     if activities:
         headers = ["ID", "Story", "Activities", "Description", "Owner",
-                   "Depends on", "Start", "End", "Effort"]
+                   "Depends on", "Start date", "End Date", "Effort months"]
         rows = [headers]
         parsed = []
         for a in activities:
@@ -513,7 +506,7 @@ def generate_pdf(scope: Dict[str, Any]) -> io.BytesIO:
             ])
 
         t = Table(rows, repeatRows=1,
-                  colWidths=[25, 90, 90, 120, 70, 100, 60, 60, 40])
+                  colWidths=[25, 100, 150, 170, 70, 170, 65, 65, 95])
         ts = TableStyle([
             ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(THEME["header_bg"])),
@@ -523,6 +516,7 @@ def generate_pdf(scope: Dict[str, Any]) -> io.BytesIO:
             ts.add("BACKGROUND", (0, i), (-1, i),
                    colors.HexColor(THEME["zebra1" if i % 2 else "zebra2"]))
         t.setStyle(ts)
+        t.hAlign="LEFT"
         elems.append(Paragraph("<b>Activities Breakdown</b>", styles["Heading2"]))
         elems.append(t)
         elems.append(Spacer(1, 0.4 * cm))
@@ -589,37 +583,65 @@ def generate_pdf(scope: Dict[str, Any]) -> io.BytesIO:
                 ]
 
         merged_res = sorted(merged.values(), key=lambda x: x["Cost"], reverse=True)
-        rows = [["ID", "Resources", "Rate/month"] + mkeys + ["Efforts", "Cost"]]
+
+        # Collect rows
         tot_eff = tot_cost = 0
         pie_labels, pie_vals = [], []
-
+        base_rows = []
         for i, r in enumerate(merged_res, start=1):
             tot_eff += r["Efforts"]; tot_cost += r["Cost"]
             pie_labels.append(r["Resources"]); pie_vals.append(r["Cost"])
-            rows.append([
-                i, Paragraph(r["Resources"], wrap), f"${r['Rate/month']:,.2f}",
-                *[int(v) for v in r["months"]], r["Efforts"], f"${r['Cost']:,.2f}"
+            base_rows.append([
+                i,
+                Paragraph(r["Resources"], wrap),
+                f"${r['Rate/month']:,.2f}",
+                *[int(v) for v in r["months"]],
+                f"{r['Efforts']:.1f}",       
+                f"${r['Cost']:,.2f}"
             ])
-        rows.append(["Total", "", ""] + [""]*len(mkeys) +
-                    [tot_eff, f"${tot_cost:,.2f}"])
 
-        t2 = Table(rows, repeatRows=1,
-                   colWidths=[30, 120, 70] + [60]*len(mkeys) + [50, 65])
-        ts2 = TableStyle([
-            ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(THEME["header_bg"])),
-            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("BACKGROUND", (0, len(rows)-1), (-1, len(rows)-1),
-             colors.HexColor(THEME["total_bg"]))
-        ])
-        for i in range(1, len(rows)-1):
-            ts2.add("BACKGROUND", (0, i), (-1, i),
-                    colors.HexColor(THEME["zebra1" if i % 2 else "zebra2"]))
-        t2.setStyle(ts2)
-        elems.append(Paragraph("<b>Resourcing Plan</b>", styles["Heading2"]))
-        elems.append(t2)
-        elems.append(Spacer(1, 0.4*cm))
+        base_rows.append(
+            ["Total", "", ""] + [""]*len(mkeys) +
+            [f"{tot_eff:.1f}", f"${tot_cost:,.2f}"] 
+        )
 
+
+        # ---- Split into chunks if too wide ----
+        MAX_MONTH_COLS = 10   
+        for start in range(0, len(mkeys), MAX_MONTH_COLS):
+            month_chunk = mkeys[start:start+MAX_MONTH_COLS]
+
+            # Build sub-rows for this chunk
+            sub_rows = []
+            for row in base_rows:
+                fixed = row[:3]  
+                months = row[3:3+len(mkeys)]
+                end = row[-2:]   
+                sub_months = months[start:start+MAX_MONTH_COLS]
+                sub_rows.append(fixed + sub_months + end)
+
+            # Insert header
+            header = ["ID", "Resources", "Rate/month"] + month_chunk + ["Efforts", "Cost"]
+            sub_rows.insert(0, header)
+
+            t2 = LongTable(sub_rows, repeatRows=1,
+                        colWidths=[30, 90, 70] + [55]*len(month_chunk) + [50, 65])
+            ts2 = TableStyle([
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(THEME["header_bg"])),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("BACKGROUND", (0, len(sub_rows)-1), (-1, len(sub_rows)-1),
+                colors.HexColor(THEME["total_bg"]))
+            ])
+            for i in range(1, len(sub_rows)-1):
+                ts2.add("BACKGROUND", (0, i), (-1, i),
+                        colors.HexColor(THEME["zebra1" if i % 2 else "zebra2"]))
+            t2.setStyle(ts2)
+            t2.hAlign = "LEFT"
+
+            elems.append(Paragraph("<b>Resourcing Plan</b>", styles["Heading2"]))
+            elems.append(t2)
+            elems.append(Spacer(1, 0.4*cm))
         # Pie chart
         if pie_labels:
             d2 = Drawing(400, 250)
@@ -635,7 +657,7 @@ def generate_pdf(scope: Dict[str, Any]) -> io.BytesIO:
             elems.append(Paragraph("<b>Cost Projection</b>", styles["Heading2"]))
             elems.append(d2)
 
-    # -------- Build PDF --------
+    # Build PDF
     doc.build(elems)
     buf.seek(0)
     return buf

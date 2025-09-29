@@ -1,12 +1,7 @@
 from fastapi import APIRouter
 from fastapi_users import FastAPIUsers
-from fastapi_users.authentication import (
-    JWTStrategy,
-    AuthenticationBackend,
-    BearerTransport,
-)
+from fastapi_users.authentication import (JWTStrategy,AuthenticationBackend,BearerTransport,)
 import uuid
-
 from app.models import User
 from app.auth.manager import get_user_manager
 from app.schemas import UserRead, UserCreate, UserUpdate
@@ -17,9 +12,6 @@ bearer_transport = BearerTransport(tokenUrl="auth/jwt/login")
 
 
 def get_jwt_strategy() -> JWTStrategy:
-    """
-    Returns JWT strategy with secret + expiration time.
-    """
     return JWTStrategy(
         secret=config.SECRET_KEY,
         lifetime_seconds=config.ACCESS_TOKEN_EXPIRE_MINUTES * 60,

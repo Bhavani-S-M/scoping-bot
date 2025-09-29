@@ -1,4 +1,3 @@
-# app/routers/blobs.py
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from typing import List, Literal
@@ -19,9 +18,7 @@ def _validate_base(base: str) -> str:
     return base
 
 
-# -------------------------
 # Uploads
-# -------------------------
 @router.post("/upload/file")
 async def upload_file(
     file: UploadFile = File(...),
@@ -36,7 +33,7 @@ async def upload_file(
         blob_name = blob_name.strip("/")
 
         data = await file.read()
-        path = await azure_blob.upload_bytes(data, blob_name, base)  # ✅ direct await
+        path = await azure_blob.upload_bytes(data, blob_name, base)
 
         return {"status": "success", "blob": path}
     except Exception as e:
@@ -55,27 +52,24 @@ async def upload_folder(
         uploaded = []
 
         for file in files:
-            safe_name = file.filename.replace(" ", "_")
-            blob_name = f"{folder}/{safe_name}" if folder else safe_name
+            relative_path = file.filename.replace(" ", "_")
+            blob_name = f"{folder}/{relative_path}" if folder else relative_path
             blob_name = blob_name.strip("/")
 
             data = await file.read()
-            path = await azure_blob.upload_bytes(data, blob_name, base)  # ✅ direct await
+            path = await azure_blob.upload_bytes(data, blob_name, base)
             uploaded.append(path)
 
         return {"status": "success", "files": uploaded}
     except Exception as e:
         raise HTTPException(500, f"Upload failed: {e}")
 
-
-# -------------------------
 # Explorer-Style Listing
-# -------------------------
 @router.get("/explorer/{base}")
 async def explorer_tree(base: Literal["projects", "knowledge_base"]):
     try:
         base = _validate_base(base)
-        tree = await azure_blob.explorer(base)  # ✅ direct await
+        tree = await azure_blob.explorer(base)
         return {
             "status": "success",
             "base": base,
@@ -85,16 +79,13 @@ async def explorer_tree(base: Literal["projects", "knowledge_base"]):
         raise HTTPException(500, f"Explorer listing failed: {e}")
 
 
-# -------------------------
-# Download & Preview
-# -------------------------
+# Download
 @router.get("/download/{blob_name:path}")
 async def download_blob(blob_name: str, base: Literal["projects", "knowledge_base"] = Query(...)):
     try:
         base = _validate_base(base)
-        blob_bytes = await azure_blob.download_bytes(blob_name, base)  # ✅ direct await
+        blob_bytes = await azure_blob.download_bytes(blob_name, base)
         file_like = io.BytesIO(blob_bytes)
-
         filename = blob_name.split("/")[-1]
         content_type, _ = mimetypes.guess_type(filename)
         content_type = content_type or "application/octet-stream"
@@ -107,14 +98,13 @@ async def download_blob(blob_name: str, base: Literal["projects", "knowledge_bas
     except Exception as e:
         raise HTTPException(404, f"Blob not found: {e}")
 
-
+# Preview
 @router.get("/preview/{blob_name:path}")
 async def preview_blob(blob_name: str, base: Literal["projects", "knowledge_base"] = Query(...)):
     try:
         base = _validate_base(base)
-        blob_bytes = await azure_blob.download_bytes(blob_name, base)  # ✅ direct await
+        blob_bytes = await azure_blob.download_bytes(blob_name, base)
         file_like = io.BytesIO(blob_bytes)
-
         filename = blob_name.split("/")[-1]
         content_type, _ = mimetypes.guess_type(filename)
         content_type = content_type or "application/octet-stream"
@@ -128,14 +118,12 @@ async def preview_blob(blob_name: str, base: Literal["projects", "knowledge_base
         raise HTTPException(404, f"Blob not found: {e}")
 
 
-# -------------------------
 # Delete
-# -------------------------
 @router.delete("/delete/file/{blob_name:path}")
 async def delete_file(blob_name: str, base: Literal["projects", "knowledge_base"] = Query(...)):
     try:
         base = _validate_base(base)
-        await azure_blob.delete_blob(blob_name, base)  # ✅ direct await
+        await azure_blob.delete_blob(blob_name, base)
         return {"status": "success", "deleted": f"{base}/{blob_name}"}
     except Exception as e:
         raise HTTPException(404, f"File not found: {e}")
@@ -145,7 +133,7 @@ async def delete_file(blob_name: str, base: Literal["projects", "knowledge_base"
 async def delete_folder(folder_name: str, base: Literal["projects", "knowledge_base"] = Query(...)):
     try:
         base = _validate_base(base)
-        deleted = await azure_blob.delete_folder(folder_name, base)  # ✅ direct await
+        deleted = await azure_blob.delete_folder(folder_name, base)
         if not deleted:
             raise HTTPException(404, "Folder is empty or not found")
         return {"status": "success", "deleted": deleted}
@@ -153,13 +141,11 @@ async def delete_folder(folder_name: str, base: Literal["projects", "knowledge_b
         raise HTTPException(404, f"Folder not found: {e}")
 
 
-# -------------------------
 # SAS Token
-# -------------------------
 @router.get("/sas-token")
 async def get_sas_token(hours: int = 1):
     try:
-        url = azure_blob.generate_sas_url(hours)  # ✅ sync call, no await
+        url = azure_blob.generate_sas_url(hours)
         return {"status": "success", "sas_url": url}
     except Exception as e:
         raise HTTPException(500, f"SAS generation failed: {e}")

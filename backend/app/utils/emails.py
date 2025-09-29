@@ -1,6 +1,4 @@
-"""
-Email utilities: send OTPs, password reset links, and verification links.
-"""
+# Email utilities: send OTPs, password reset links, and verification links.
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart

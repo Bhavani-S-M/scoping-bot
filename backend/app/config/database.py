@@ -1,6 +1,4 @@
-"""
-Database setup using SQLAlchemy (async only).
-"""
+# Database setup using SQLAlchemy (async only).
 from typing import AsyncGenerator
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
@@ -8,7 +6,7 @@ from app.config import config
 
 # Async SQLAlchemy engine
 async_engine = create_async_engine(
-    config.ASYNC_DATABASE_URL, echo=False, future=True
+    config.DATABASE_URL, echo=False, future=True
 )
 
 # Async session factory

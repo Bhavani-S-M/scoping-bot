@@ -6,9 +6,7 @@ from azure.core.exceptions import ResourceExistsError
 from app.config import config
 from datetime import datetime, timedelta
 
-# ----------------------------------------------------------------------
 # Config
-# ----------------------------------------------------------------------
 AZURE_STORAGE_ACCOUNT = config.AZURE_STORAGE_ACCOUNT
 AZURE_STORAGE_KEY = config.AZURE_STORAGE_KEY
 AZURE_STORAGE_CONTAINER = config.AZURE_STORAGE_CONTAINER or "scopingbot"
@@ -31,9 +29,7 @@ async def init_container():
         pass
 
 
-# ----------------------------------------------------------------------
 # Helpers
-# ----------------------------------------------------------------------
 def _normalize_path(blob_name: str, base: str) -> str:
     blob_name = blob_name.strip("/")
     base = base.strip("/")
@@ -42,9 +38,7 @@ def _normalize_path(blob_name: str, base: str) -> str:
     return f"{base}/{blob_name}" if base else blob_name
 
 
-# ----------------------------------------------------------------------
 # Upload
-# ----------------------------------------------------------------------
 async def upload_bytes(data: Union[bytes, bytearray], blob_name: str, base: str = "") -> str:
     path = _normalize_path(blob_name, base)
     blob = container.get_blob_client(path)
@@ -57,9 +51,7 @@ async def upload_file(path: str, blob_name: str, base: str = "") -> str:
     return await upload_bytes(data, blob_name, base=base)
 
 
-# ----------------------------------------------------------------------
 # Download
-# ----------------------------------------------------------------------
 async def download_bytes(blob_name: str, base: str = "") -> bytes:
     path = _normalize_path(blob_name, base)
     blob = container.get_blob_client(path)
@@ -71,9 +63,7 @@ async def download_text(blob_name: str, base: str = "", encoding: str = "utf-8")
     return raw.decode(encoding, errors="ignore")
 
 
-# ----------------------------------------------------------------------
 # Listing
-# ----------------------------------------------------------------------
 async def list_bases() -> List[Dict]:
     return [
         {"name": "projects", "path": "projects", "is_folder": True},
@@ -119,9 +109,7 @@ async def explorer(base: str) -> Dict:
     return {"base": base, "children": await build_tree(base)}
 
 
-# ----------------------------------------------------------------------
 # Delete
-# ----------------------------------------------------------------------
 async def delete_blob(blob_name: str, base: str = "") -> bool:
     path = _normalize_path(blob_name, base)
     blob = container.get_blob_client(path)
@@ -140,9 +128,7 @@ async def delete_folder(prefix: str, base: str = "") -> List[str]:
     return deleted
 
 
-# ----------------------------------------------------------------------
 # Existence & URL
-# ----------------------------------------------------------------------
 async def blob_exists(blob_name: str, base: str = "") -> bool:
     path = _normalize_path(blob_name, base)
     blob = container.get_blob_client(path)

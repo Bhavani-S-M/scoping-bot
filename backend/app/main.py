@@ -4,11 +4,11 @@ from fastapi.staticfiles import StaticFiles
 import os
 
 from app.config import config
-from app.config.database import async_engine, Base  # use async engine only
+from app.config.database import async_engine, Base 
 from app import models
 from app.auth import router as auth_router
 from app.routers import projects, exports, blob
-from app.utils import azure_blob  # 👈 import blob utils
+from app.utils import azure_blob
 
 # ---------- App Init ----------
 app = FastAPI(

@@ -13,14 +13,11 @@ logger = logging.getLogger(__name__)
 PROJECTS_BASE = "projects"
 
 
-# -------------------------
 # Projects CRUD
-# -------------------------
-
 async def list_projects(db: AsyncSession, owner_id: uuid.UUID) -> List[models.Project]:
     result = await db.execute(
         select(models.Project)
-        .options(selectinload(models.Project.files))   # ✅ eager load safely
+        .options(selectinload(models.Project.files))
         .filter(models.Project.owner_id == owner_id)
         .order_by(models.Project.created_at.desc())
     )
@@ -34,14 +31,14 @@ async def get_project(
 ) -> Optional[models.Project]:
     result = await db.execute(
         select(models.Project)
-        .options(selectinload(models.Project.files))   # ✅ eager load safely
+        .options(selectinload(models.Project.files))
         .filter(models.Project.id == project_id, models.Project.owner_id == owner_id)
     )
     project = result.scalars().first()
     if project:
-        logger.info(f"📂 Loaded project {project_id} for owner {owner_id}")
+        logger.info(f"Loaded project {project_id} for owner {owner_id}")
     else:
-        logger.warning(f"⚠️ Project {project_id} not found or access denied for owner {owner_id}")
+        logger.warning(f" Project {project_id} not found or access denied for owner {owner_id}")
     return project
 
 
@@ -55,11 +52,11 @@ async def create_project(
     db.add(db_project)
     await db.commit()
     await db.refresh(db_project)
-    logger.info(f"✅ Created project {db_project.id} for owner {owner_id}")
+    logger.info(f" Created project {db_project.id} for owner {owner_id}")
 
     if files:
         await add_project_files(db, db_project.id, files)
-        logger.info(f"📎 Attached {len(files)} files to project {db_project.id}")
+        logger.info(f" Attached {len(files)} files to project {db_project.id}")
 
     return db_project
 
@@ -73,12 +70,11 @@ async def update_project(
         setattr(db_project, field, value)
     await db.commit()
     await db.refresh(db_project)
-    logger.info(f"✏️ Updated project {db_project.id}")
+    logger.info(f" Updated project {db_project.id}")
     return db_project
 
 
 async def delete_project(db: AsyncSession, db_project: models.Project) -> bool:
-    # ✅ Ensure files are available (in case project was loaded without selectinload)
     await db.refresh(db_project, attribute_names=["files"])
 
     logger.info(f"🗑 Deleting project {db_project.id} and {len(db_project.files)} attached files...")
@@ -86,20 +82,20 @@ async def delete_project(db: AsyncSession, db_project: models.Project) -> bool:
         try:
             if f.file_path:
                 await blob_utils.delete_blob(f.file_path)
-                logger.info(f"   🗑 Deleted blob: {f.file_path}")
+                logger.info(f" Deleted blob: {f.file_path}")
         except Exception as e:
-            logger.warning(f"⚠️ Failed to delete blob {f.file_path}: {e}")
+            logger.warning(f" Failed to delete blob {f.file_path}: {e}")
 
     await db.delete(db_project)
     await db.commit()
-    logger.info(f"✅ Project {db_project.id} deleted")
+    logger.info(f" Project {db_project.id} deleted")
     return True
 
 
 async def delete_all_projects(db: AsyncSession, owner_id: uuid.UUID) -> int:
     result = await db.execute(
         select(models.Project)
-        .options(selectinload(models.Project.files))   # ✅ eager load safely
+        .options(selectinload(models.Project.files))
         .filter(models.Project.owner_id == owner_id)
     )
     projects = result.scalars().all()
@@ -111,10 +107,7 @@ async def delete_all_projects(db: AsyncSession, owner_id: uuid.UUID) -> int:
     return count
 
 
-# -------------------------
 # Project Files CRUD
-# -------------------------
-
 async def add_project_file(
     db: AsyncSession,
     project_id: uuid.UUID,
@@ -148,7 +141,7 @@ async def add_project_file(
     db.add(db_file)
     await db.commit()
     await db.refresh(db_file)
-    logger.info(f"📎 Uploaded and attached file {upload_file.filename} -> {unique_name}")
+    logger.info(f" Uploaded and attached file {upload_file.filename} -> {unique_name}")
     return db_file
 
 
@@ -160,7 +153,7 @@ async def add_project_files(
     results = []
     for f in files:
         results.append(await add_project_file(db, project_id, f))
-    logger.info(f"📎 Added {len(results)} files to project {project_id}")
+    logger.info(f" Added {len(results)} files to project {project_id}")
     return results
 
 
@@ -171,13 +164,11 @@ async def list_project_files(db: AsyncSession, project_id: uuid.UUID) -> List[mo
         .order_by(models.ProjectFile.uploaded_at.desc())
     )
     files = result.scalars().all()
-    logger.info(f"📂 Listed {len(files)} files for project {project_id}")
+    logger.info(f" Listed {len(files)} files for project {project_id}")
     return files
 
 
-# -------------------------
 # Finalized Scope Utilities
-# -------------------------
 
 async def has_finalized_scope(db: AsyncSession, project_id: uuid.UUID) -> bool:
     """
@@ -192,9 +183,7 @@ async def has_finalized_scope(db: AsyncSession, project_id: uuid.UUID) -> bool:
     return result.scalar_one_or_none() is not None
 
 
-# -------------------------
 # Finalize Scope
-# -------------------------
 
 async def finalize_scope(
     db: AsyncSession,
@@ -203,7 +192,7 @@ async def finalize_scope(
 ) -> tuple[models.ProjectFile, dict]:
     from app.utils.export import normalize_scope
 
-    logger.info(f"📝 Finalizing scope for project {project_id}...")
+    logger.info(f" Finalizing scope for project {project_id}...")
 
     # Normalize scope data
     normalized = normalize_scope(scope_data)
@@ -212,7 +201,7 @@ async def finalize_scope(
     # Update Project table fields from overview
     result = await db.execute(
         select(models.Project)
-        .options(selectinload(models.Project.files))   # ✅ eager load safely
+        .options(selectinload(models.Project.files))
         .filter(models.Project.id == project_id)
     )
     db_project = result.scalars().first()
@@ -227,7 +216,7 @@ async def finalize_scope(
         db_project.duration = str(overview.get("Duration") or db_project.duration)
         await db.commit()
         await db.refresh(db_project)
-        logger.info(f"✅ Updated project {project_id} metadata from finalized scope")
+        logger.info(f"Updated project {project_id} metadata from finalized scope")
 
     # Remove old finalized scope if exists
     result = await db.execute(
@@ -243,9 +232,9 @@ async def finalize_scope(
             await blob_utils.delete_blob(old_file.file_path)
             await db.delete(old_file)
             await db.commit()
-            logger.info(f"🗑 Removed old finalized_scope.json for project {project_id}")
+            logger.info(f" Removed old finalized_scope.json for project {project_id}")
         except Exception as e:
-            logger.warning(f"⚠️ Failed to delete old finalized_scope.json from blob: {e}")
+            logger.warning(f" Failed to delete old finalized_scope.json from blob: {e}")
 
     # Upload new finalized_scope.json to blob
     blob_name = f"{PROJECTS_BASE}/{project_id}/finalized_scope.json"
@@ -253,7 +242,7 @@ async def finalize_scope(
         json.dumps(normalized, ensure_ascii=False, indent=2).encode("utf-8"),
         blob_name
     )
-    logger.info(f"📤 Uploaded new finalized_scope.json -> {blob_name}")
+    logger.info(f" Uploaded new finalized_scope.json -> {blob_name}")
 
     db_file = models.ProjectFile(
         project_id=project_id,
@@ -264,6 +253,5 @@ async def finalize_scope(
     await db.commit()
     await db.refresh(db_file)
 
-    logger.info(f"✅ Finalized scope stored for project {project_id}")
-    # Mark the normalized scope as finalized
+    logger.info(f" Finalized scope stored for project {project_id}")
     return db_file, {**normalized, "_finalized": True}

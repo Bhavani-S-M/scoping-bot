@@ -17,20 +17,17 @@ current_active_user = fastapi_users.current_user(active=True)
 router = APIRouter(prefix="/projects/{project_id}/export", tags=["Export"])
 
 
-# ---------- Helpers ----------
+# Helpers
 async def _get_project(project_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSession) -> models.Project:
     project = await projects.get_project(db, project_id=project_id, owner_id=user_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found or access denied")
-
-    # ✅ ensure files relationship is preloaded (avoid greenlet_spawn bug)
     await db.refresh(project, attribute_names=["files"])
     return project
 
 
 async def _load_finalized_scope(project: models.Project) -> Optional[Dict[str, Any]]:
-    """Try to fetch finalized scope JSON from blob storage."""
-    for f in project.files:  # safe because files preloaded above
+    for f in project.files:
         if f.file_name == "finalized_scope.json":
             try:
                 blob_bytes = await azure_blob.download_bytes(f.file_path)
@@ -46,7 +43,6 @@ def _safe_filename(name: str) -> str:
 
 
 async def _ensure_scope(project: models.Project) -> Dict[str, Any]:
-    """Return finalized scope if available, else generate draft scope."""
     scope = await _load_finalized_scope(project)
     if not scope:
         raw_scope = await scope_engine.generate_project_scope(project)
@@ -54,9 +50,7 @@ async def _ensure_scope(project: models.Project) -> Dict[str, Any]:
     return scope
 
 
-# -------------------------
-# PREVIEW EXPORTS (no DB write)
-# -------------------------
+# PREVIEW EXPORTS
 
 @router.post("/preview/json")
 async def preview_json_from_scope(
@@ -110,9 +104,7 @@ async def preview_pdf_from_scope(
     )
 
 
-# -------------------------
 # FINALIZED EXPORTS
-# -------------------------
 
 @router.get("/json")
 async def export_project_json(
