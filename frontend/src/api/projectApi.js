@@ -1,3 +1,4 @@
+// src/api/projectApi.js
 import api from "./axiosClient";
 
 // Helper to append only non-empty values
@@ -10,18 +11,25 @@ const appendIfPresent = (formData, key, value) => {
 };
 
 const projectApi = {
-  // Projects
+  // -------------------------
+  // Projects CRUD
+  // -------------------------
+
   getProjects: () => api.get("/projects"),
+
   getProject: (id) => api.get(`/projects/${id}`),
 
   createProject: (data) => {
     const formData = new FormData();
+
+    // Basic fields
     appendIfPresent(formData, "name", data.name);
     appendIfPresent(formData, "domain", data.domain);
     appendIfPresent(formData, "complexity", data.complexity);
     appendIfPresent(formData, "tech_stack", data.tech_stack);
     appendIfPresent(formData, "use_cases", data.use_cases);
 
+    // Compliance: allow multiple
     if (Array.isArray(data.compliance)) {
       data.compliance.forEach((c) => formData.append("compliance", c));
     } else {
@@ -30,6 +38,7 @@ const projectApi = {
 
     appendIfPresent(formData, "duration", data.duration);
 
+    // Files
     if (Array.isArray(data.files) && data.files.length > 0) {
       data.files.forEach((item) => {
         const fileObj = item?.file || item;
@@ -37,6 +46,7 @@ const projectApi = {
           formData.append("files", fileObj);
         }
         if (item?.type) {
+          // Optional: store type alongside each file
           formData.append("file_types", String(item.type));
         }
       });
@@ -47,16 +57,35 @@ const projectApi = {
     });
   },
 
+  updateProject: (id, updateData) => api.put(`/projects/${id}`, updateData),
+
   deleteProject: (id) => api.delete(`/projects/${id}`),
+
   deleteAllProjects: () => api.delete("/projects"),
 
+  // -------------------------
+  // Scope Handling
+  // -------------------------
+
   generateScope: (id) => api.get(`/projects/${id}/generate_scope`),
+
   finalizeScope: (id, scopeData) =>
     api.post(`/projects/${id}/finalize_scope`, scopeData, {
       headers: { "Content-Type": "application/json" },
     }),
 
-  // Blob helpers (URLs only)
+  regenerateScope: (id, payload) =>
+    api.post(`/projects/${id}/regenerate_scope`, payload, {
+      headers: { "Content-Type": "application/json" },
+    }),
+
+  // ✅ NEW: Get finalized scope JSON back from backend
+  getFinalizedScope: (id, { signal } = {}) =>
+    api.get(`/projects/${id}/finalized_scope`, { signal }),
+
+  // -------------------------
+  // Blob Helpers (URLs only)
+  // -------------------------
   getDownloadUrl: (filePath, base = "projects") =>
     `${api.defaults.baseURL}/blobs/download/${filePath}?base=${base}`,
 

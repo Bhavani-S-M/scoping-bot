@@ -5,7 +5,10 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 from fastapi_users import schemas as fa_schemas
 
+
+# -------------------------
 # User
+# -------------------------
 class UserRead(fa_schemas.BaseUser[uuid.UUID]):
     username: str
     is_superuser: bool
@@ -30,7 +33,10 @@ class UserList(BaseModel):
     class Config:
         from_attributes = True
 
+
+# -------------------------
 # Authentication
+# -------------------------
 class Token(BaseModel):
     access_token: str
     refresh_token: Optional[str] = None
@@ -41,19 +47,24 @@ class TokenData(BaseModel):
     email: Optional[str] = None
 
 
+# -------------------------
 # Project File
+# -------------------------
 class ProjectFile(BaseModel):
     id: uuid.UUID
     file_name: str
     file_path: str
     uploaded_at: datetime
-    url: Optional[str] = None
+    download_url: Optional[str] = None   # ✅ Added
+    preview_url: Optional[str] = None    # ✅ Added
 
     class Config:
         from_attributes = True
 
 
+# -------------------------
 # Project
+# -------------------------
 class ProjectBase(BaseModel):
     name: Optional[str] = None
     domain: Optional[str] = None
@@ -61,7 +72,7 @@ class ProjectBase(BaseModel):
     tech_stack: Optional[str] = None
     use_cases: Optional[str] = None
     compliance: Optional[str] = None
-    duration: Optional[str] = None
+    duration: Optional[str] = None  # consider int if you want stricter typing
 
 
 class ProjectCreate(ProjectBase):
@@ -80,14 +91,18 @@ class Project(ProjectBase):
         from_attributes = True
 
 
+# -------------------------
 # Scope Response
+# -------------------------
 class GeneratedScopeResponse(BaseModel):
-    overview: Optional[Dict[str, Any]] = {}
-    activities: Optional[List[Dict[str, Any]]] = []
-    resourcing_plan: Optional[List[Dict[str, Any]]] = []
+    overview: Dict[str, Any] = {}
+    activities: List[Dict[str, Any]] = []
+    resourcing_plan: List[Dict[str, Any]] = []
 
 
+# -------------------------
 # Generic Responses
+# -------------------------
 class MessageResponse(BaseModel):
     msg: str
     scope: Optional[Dict[str, Any]] = None
@@ -95,8 +110,9 @@ class MessageResponse(BaseModel):
     has_finalized_scope: Optional[bool] = None
 
 
-class ProjectCreateResponse(BaseModel):
-    project_id: uuid.UUID
-    scope: Optional[GeneratedScopeResponse]
-    redirect_url: Optional[str]
-    has_finalized_scope: bool = False
+# -------------------------
+# Regenerate Scope
+# -------------------------
+class RegenerateScopeRequest(BaseModel):
+    draft: Dict[str, Any]
+    instructions: str

@@ -46,162 +46,13 @@ def _to_float(v, d=0.0):
     try: return float(str(v).replace(",","").strip())
     except: return d
 
-def _to_int(v, d=0):
-    try: return int(float(v))
-    except: return d
-
-def _safe_str(v, d=""): 
-    return d if v is None else str(v)
-
-def _parse_date_safe(val: str, default: datetime | None = None) -> datetime | None:
-    try:
-        return datetime.fromisoformat(val) if val else default
-    except Exception:
-        return default
-
-
-# Normalize Scope
-def normalize_scope(scope: Dict[str, Any]) -> Dict[str, Any]:
-    import copy
-    data = copy.deepcopy(scope or {})
-    ov = data.get("overview") or {}
-
-    # Collect activity dates
-    start_dates, end_dates = [], []
-    for a in data.get("activities") or []:
-        s = _parse_date_safe(a.get("Start Date"))
-        e = _parse_date_safe(a.get("End Date"))
-        if s: start_dates.append(s)
-        if e: end_dates.append(e)
-
-    min_start = min(start_dates) if start_dates else datetime.utcnow()
-    max_end = max(end_dates) if end_dates else min_start
-
-    # Shift into future if needed
-    today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-    if min_start < today:
-        offset = (today - min_start).days
-        for a in data.get("activities") or []:
-            s = _parse_date_safe(a.get("Start Date"))
-            e = _parse_date_safe(a.get("End Date"))
-            if s:
-                s = s + timedelta(days=offset)
-                a["Start Date"] = s.strftime("%Y-%m-%d")
-            if e:
-                e = e + timedelta(days=offset)
-                a["End Date"] = e.strftime("%Y-%m-%d")
-
-        # Recompute bounds
-        start_dates = [_parse_date_safe(a.get("Start Date")) for a in data.get("activities") if a.get("Start Date")]
-        end_dates = [_parse_date_safe(a.get("End Date")) for a in data.get("activities") if a.get("End Date")]
-        start_dates = [s for s in start_dates if s]
-        end_dates = [e for e in end_dates if e]
-        min_start = min(start_dates) if start_dates else today
-        max_end = max(end_dates) if end_dates else min_start
-
-    diff_days = max(1, (max_end - min_start).days)
-    activity_months = max(1, round(diff_days / 30))
-    user_duration = _to_int(ov.get("Duration"))
-    duration = max(user_duration, activity_months) if user_duration > 0 else activity_months
-
-    data["overview"] = {
-        "Project Name": _safe_str(ov.get("Project Name") or "Untitled Project"),
-        "Domain": _safe_str(ov.get("Domain") or ""),
-        "Complexity": _safe_str(ov.get("Complexity") or ""),
-        "Tech Stack": _safe_str(ov.get("Tech Stack") or ""),
-        "Use Cases": _safe_str(ov.get("Use Cases") or ""),
-        "Compliance": _safe_str(ov.get("Compliance") or ""),
-        "Duration": duration,
-        "Generated At": _safe_str(
-            ov.get("Generated At") or datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
-        ),
-    }
-
-    # Month labels
-    month_labels = []
-    cur = datetime(min_start.year, min_start.month, 1)
-    while cur <= max_end:
-        month_labels.append(cur.strftime("%b %Y"))
-        cur = datetime(
-            cur.year + (1 if cur.month == 12 else 0),
-            1 if cur.month == 12 else cur.month + 1,
-            1,
-        )
-
-    acts, role_month_map = [], {}
-
-    # Activities
-    for idx, a in enumerate(data.get("activities") or [], start=1):
-        s = _parse_date_safe(a.get("Start Date"), min_start)
-        e = _parse_date_safe(a.get("End Date"), s or min_start)
-        if e < s: e = s
-        dur_days = max(1, (e - s).days)
-        total_months = round(dur_days / 30.0, 2)
-
-        # Month span
-        span_months, curm = [], datetime(s.year, s.month, 1)
-        while curm <= e:
-            span_months.append(curm.strftime("%b %Y"))
-            curm = datetime(
-                curm.year + (1 if curm.month == 12 else 0),
-                1 if curm.month == 12 else curm.month + 1,
-                1,
-            )
-
-        # Roles
-        raw_deps = [d.strip() for d in str(a.get("Depends on") or "").split(",") if d.strip()]
-        all_roles = set(raw_deps + [a.get("Owner") or "Unassigned"])
-        per_role = total_months / len(all_roles) if all_roles else total_months
-
-        norm_deps = []
-        for r in all_roles:
-            match = next((k for k in ROLE_RATE_MAP if k.lower() in r.lower() or r.lower() in k.lower()), r.title())
-            if r in raw_deps: norm_deps.append(match)
-            if match not in role_month_map:
-                role_month_map[match] = {m: 0.0 for m in month_labels}
-            for m in span_months:
-                role_month_map[match][m] += per_role
-
-        acts.append({
-            "ID": idx,
-            "Story": _safe_str(a.get("Story")),
-            "Activities": _safe_str(a.get("Activities")),
-            "Description": _safe_str(a.get("Description")),
-            "Owner": _safe_str(a.get("Owner")),
-            "Depends on": ", ".join(norm_deps),
-            "Start Date": s.strftime("%Y-%m-%d"),
-            "End Date": e.strftime("%Y-%m-%d"),
-            "Effort Months": total_months,
-        })
-
-    data["activities"] = acts
-
-    # Resourcing
-    user_res = {r.get("Resources", "").strip().lower(): r for r in (scope.get("resourcing_plan") or [])}
-    res = []
-    for idx, (role, month_map) in enumerate(role_month_map.items(), start=1):
-        urow = user_res.get(role.strip().lower())
-        monthly = {m: _to_float(urow.get(m, month_map[m]) if urow else month_map[m]) for m in month_labels}
-        eff = round(sum(monthly.values()), 1)
-        rate = _to_float((urow or {}).get("Rate/month") or ROLE_RATE_MAP.get(role, 2000.0))
-        cost = round(eff * rate, 2)
-        res.append({
-            "ID": idx,
-            "Resources": role,
-            "Rate/month": rate,
-            **{m: round(monthly[m], 1) for m in month_labels},
-            "Efforts": eff,
-            "Cost": cost,
-        })
-
-    data["resourcing_plan"] = res
-    return data
-
 
 # JSON Export
 def generate_json_data(scope: Dict[str, Any]) -> Dict[str, Any]:
-    return normalize_scope(scope)
+    return scope
 
+
+# Excel Export
 
 # Excel Export
 def generate_xlsx(scope: Dict[str, Any]) -> io.BytesIO:
@@ -237,43 +88,44 @@ def generate_xlsx(scope: Dict[str, Any]) -> io.BytesIO:
         # -------- Activities ----------
         ws_a = wb.add_worksheet("Activities")
         headers = [
-            "ID", "Story", "Activities", "Description", "Owner",
-            "Depends on", "Start Date", "End Date", "Effort (months)", "DurationTemp"
+            "ID", "Activities", "Description", "Owner",
+            "Resources", "Start Date", "End Date", "Effort (months)", "DurationTemp"
         ]
         ws_a.write_row("A1", headers, fmt_th)
+
         ws_a.set_column("A:A", 5)
-        ws_a.set_column("B:B", 15)
-        ws_a.set_column("C:F", 30)
-        ws_a.set_column("G:J", 12)
+        ws_a.set_column("B:B", 25) 
+        ws_a.set_column("C:D", 30)  
+        ws_a.set_column("E:E", 20)  
+        ws_a.set_column("F:I", 15)   
 
         starts, ends = [], []
         for r, a in enumerate(data.get("activities", []), start=2):
             zfmt = fmt_z1 if r % 2 else fmt_z2
             ws_a.write(r-1, 0, a.get("ID"), zfmt)
-            ws_a.write(r-1, 1, a.get("Story"), zfmt)
-            ws_a.write(r-1, 2, a.get("Activities"), zfmt)
-            ws_a.write(r-1, 3, a.get("Description"), zfmt)
-            ws_a.write(r-1, 4, a.get("Owner"), zfmt)
-            ws_a.write(r-1, 5, a.get("Depends on"), zfmt)
+            ws_a.write(r-1, 1, a.get("Activities"), zfmt)
+            ws_a.write(r-1, 2, a.get("Description"), zfmt)
+            ws_a.write(r-1, 3, a.get("Owner"), zfmt)
+            ws_a.write(r-1, 4, a.get("Resources"), zfmt)
             try:
                 s = datetime.fromisoformat(a["Start Date"])
-                ws_a.write_datetime(r-1, 6, s, fmt_date)
+                ws_a.write_datetime(r-1, 5, s, fmt_date)
                 starts.append(s)
             except:
-                ws_a.write_blank(r-1, 6, None, fmt_date)
+                ws_a.write_blank(r-1, 5, None, fmt_date)
             try:
                 e = datetime.fromisoformat(a["End Date"])
-                ws_a.write_datetime(r-1, 7, e, fmt_date)
+                ws_a.write_datetime(r-1, 6, e, fmt_date)
                 ends.append(e)
             except:
-                ws_a.write_blank(r-1, 7, None, fmt_date)
+                ws_a.write_blank(r-1, 6, None, fmt_date)
 
         last_a = len(data.get("activities", [])) + 1
 
         # Column Formulas
         if data.get("activities"):
             ws_a.add_table(
-                f"A1:J{last_a}",
+                f"A1:I{last_a}",   # Now 9 columns instead of 10
                 {
                     "name": "ActivitiesTable",
                     "columns": [
@@ -306,15 +158,15 @@ def generate_xlsx(scope: Dict[str, Any]) -> io.BytesIO:
                 gantt = wb.add_chart({"type": "bar", "subtype": "stacked"})
                 gantt.add_series({
                     "name": "Start",
-                    "categories": f"='Activities'!$C$2:$C${last_a}",
-                    "values": f"='Activities'!$G$2:$G${last_a}",
+                    "categories": f"='Activities'!$B$2:$B${last_a}",  # Activities col
+                    "values": f"='Activities'!$F$2:$F${last_a}",      # Start Date col
                     "fill": {"none": True},
                     "border": {"none": True}
                 })
                 gantt.add_series({
                     "name": "Duration",
-                    "categories": f"='Activities'!$C$2:$C${last_a}",
-                    "values": f"='Activities'!$J$2:$J${last_a}",
+                    "categories": f"='Activities'!$B$2:$B${last_a}",  # Activities col
+                    "values": f"='Activities'!$I$2:$I${last_a}",      # DurationTemp col
                     "fill": {"color": "#4D96FF"},
                     "border": {"color": "#4D96FF"}
                 })
@@ -329,7 +181,8 @@ def generate_xlsx(scope: Dict[str, Any]) -> io.BytesIO:
                 gantt.set_y_axis({"reverse": True})
                 gantt.set_legend({"none": True})
 
-                ws_a.insert_chart("L1", gantt, {"x_scale": 2.2, "y_scale": 1.6})
+                ws_a.insert_chart("K1", gantt, {"x_scale": 2.2, "y_scale": 1.6})
+
 
         # -------- Resources Plan --------
         ws_r = wb.add_worksheet("Resources Plan")
@@ -431,7 +284,6 @@ def generate_xlsx(scope: Dict[str, Any]) -> io.BytesIO:
         wb.close()
         out.seek(0)
         return out
-
 # PDF EXPORT
 def generate_pdf(scope: Dict[str, Any]) -> io.BytesIO:
     data = scope or {}
@@ -482,11 +334,13 @@ def generate_pdf(scope: Dict[str, Any]) -> io.BytesIO:
     # -------- Activities --------
     activities = data.get("activities", [])
     if activities:
-        headers = ["ID", "Story", "Activities", "Description", "Owner",
-                   "Depends on", "Start date", "End Date", "Effort months"]
+        headers = [
+            "ID", "Activities", "Description", "Owner",
+            "Resources", "Start Date", "End Date", "Effort Months"
+        ]
         rows = [headers]
         parsed = []
-        for a in activities:
+        for idx, a in enumerate(activities, start=1):
             try:
                 s = datetime.fromisoformat(a["Start Date"])
                 e = datetime.fromisoformat(a["End Date"])
@@ -494,19 +348,18 @@ def generate_pdf(scope: Dict[str, Any]) -> io.BytesIO:
             except Exception:
                 pass
             rows.append([
-                a.get("ID", ""),
-                Paragraph(a.get("Story", ""), wrap),
+                idx,  # auto incremental ID
                 Paragraph(a.get("Activities", ""), wrap),
                 Paragraph(a.get("Description", ""), wrap),
                 Paragraph(a.get("Owner", ""), wrap),
-                Paragraph(a.get("Depends on", ""), wrap),
+                Paragraph(a.get("Resources", ""), wrap),
                 a.get("Start Date", ""),
                 a.get("End Date", ""),
                 a.get("Effort Months", "")
             ])
 
         t = Table(rows, repeatRows=1,
-                  colWidths=[25, 100, 150, 170, 70, 170, 65, 65, 95])
+                  colWidths=[25, 150, 200, 100, 120, 70, 70, 95])
         ts = TableStyle([
             ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(THEME["header_bg"])),
@@ -516,7 +369,7 @@ def generate_pdf(scope: Dict[str, Any]) -> io.BytesIO:
             ts.add("BACKGROUND", (0, i), (-1, i),
                    colors.HexColor(THEME["zebra1" if i % 2 else "zebra2"]))
         t.setStyle(ts)
-        t.hAlign="LEFT"
+        t.hAlign = "LEFT"
         elems.append(Paragraph("<b>Activities Breakdown</b>", styles["Heading2"]))
         elems.append(t)
         elems.append(Spacer(1, 0.4 * cm))
@@ -546,7 +399,7 @@ def generate_pdf(scope: Dict[str, Any]) -> io.BytesIO:
                     y = 50 + i * 20
                     x = 80 + (s - min_s).days * px_per_day
                     w = max(1, (e - s).days) * px_per_day
-                    label = (a["Activities"] or a["Story"] or "")[:35]
+                    label = (a["Activities"] or "")[:35]
                     d.add(Rect(x, y, w, 10, fillColor=colors.HexColor("#4D96FF")))
                     d.add(String(x+w+4, y+2, label, fontSize=6))
                 elems.append(Paragraph("<b>Project Timeline</b>", styles["Heading2"]))
@@ -588,39 +441,36 @@ def generate_pdf(scope: Dict[str, Any]) -> io.BytesIO:
         tot_eff = tot_cost = 0
         pie_labels, pie_vals = [], []
         base_rows = []
-        for i, r in enumerate(merged_res, start=1):
+        for idx, r in enumerate(merged_res, start=1):  # <-- auto incremental ID
             tot_eff += r["Efforts"]; tot_cost += r["Cost"]
             pie_labels.append(r["Resources"]); pie_vals.append(r["Cost"])
             base_rows.append([
-                i,
+                idx,
                 Paragraph(r["Resources"], wrap),
                 f"${r['Rate/month']:,.2f}",
-                *[int(v) for v in r["months"]],
-                f"{r['Efforts']:.1f}",       
+                *[f"{v:.2f}" for v in r["months"]], 
+                f"{r['Efforts']:.2f}",
                 f"${r['Cost']:,.2f}"
             ])
 
         base_rows.append(
             ["Total", "", ""] + [""]*len(mkeys) +
-            [f"{tot_eff:.1f}", f"${tot_cost:,.2f}"] 
+            [f"{tot_eff:.2f}", f"${tot_cost:,.2f}"]
         )
 
-
         # ---- Split into chunks if too wide ----
-        MAX_MONTH_COLS = 10   
+        MAX_MONTH_COLS = 10
         for start in range(0, len(mkeys), MAX_MONTH_COLS):
             month_chunk = mkeys[start:start+MAX_MONTH_COLS]
 
-            # Build sub-rows for this chunk
             sub_rows = []
             for row in base_rows:
-                fixed = row[:3]  
+                fixed = row[:3]
                 months = row[3:3+len(mkeys)]
-                end = row[-2:]   
+                end = row[-2:]
                 sub_months = months[start:start+MAX_MONTH_COLS]
                 sub_rows.append(fixed + sub_months + end)
 
-            # Insert header
             header = ["ID", "Resources", "Rate/month"] + month_chunk + ["Efforts", "Cost"]
             sub_rows.insert(0, header)
 
@@ -642,6 +492,7 @@ def generate_pdf(scope: Dict[str, Any]) -> io.BytesIO:
             elems.append(Paragraph("<b>Resourcing Plan</b>", styles["Heading2"]))
             elems.append(t2)
             elems.append(Spacer(1, 0.4*cm))
+
         # Pie chart
         if pie_labels:
             d2 = Drawing(400, 250)

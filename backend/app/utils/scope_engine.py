@@ -1,23 +1,23 @@
 # app/utils/scope_engine.py
-import json, re, logging, difflib, os, tempfile
+import json, re, logging, difflib, os, tempfile,anyio,pytesseract, openpyxl,tiktoken, pytz
+from calendar import monthrange
 from pdfminer.high_level import extract_text as extract_pdf_text
 from docx import Document
 from pptx import Presentation
-import openpyxl
+from io import BytesIO
 from PIL import Image
-import anyio, asyncio
-import pytesseract
 from azure.search.documents.models import VectorizedQuery
 from typing import Dict, Any, List
 from datetime import datetime, timedelta
-from dateutil.relativedelta import relativedelta
-from app.models import ProjectFile
 from app.utils import azure_blob
-from app.config import config
-import tiktoken
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
+from app import models
 from app.utils.ai_clients import (
     get_azure_openai_client,
     get_azure_openai_deployment,
+    get_azure_openai_embedding_deployment,
     get_search_client,
 )
 
@@ -26,7 +26,11 @@ logger = logging.getLogger(__name__)
 # Init Azure services
 client = get_azure_openai_client()
 deployment = get_azure_openai_deployment()
+emb_model = get_azure_openai_embedding_deployment()
 search_client = get_search_client()
+
+PROJECTS_BASE = "projects"
+
 
 # Default Role Rates (USD/month)
 ROLE_RATE_MAP: Dict[str, float] = {
@@ -66,6 +70,7 @@ def _extract_json(s: str) -> dict:
                 return {}
         return {}
 
+
 async def _extract_text_from_files(files: List[dict]) -> str:
     results: List[str] = []
 
@@ -75,19 +80,24 @@ async def _extract_text_from_files(files: List[dict]) -> str:
             suffix = os.path.splitext(f["file_name"])[-1].lower()
 
             def process_file() -> str:
-                with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-                    tmp.write(blob_bytes)
-                    tmp_path = tmp.name
-
                 content = ""
                 try:
                     if suffix == ".pdf":
-                        content = extract_pdf_text(tmp_path)
+                        # pdfminer needs a temp file
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                            tmp.write(blob_bytes)
+                            tmp_path = tmp.name
+                        try:
+                            content = extract_pdf_text(tmp_path)
+                        finally:
+                            os.remove(tmp_path)
+
                     elif suffix == ".docx":
-                        doc = Document(tmp_path)
+                        doc = Document(BytesIO(blob_bytes))
                         content = "\n".join(p.text for p in doc.paragraphs)
+
                     elif suffix == ".pptx":
-                        prs = Presentation(tmp_path)
+                        prs = Presentation(BytesIO(blob_bytes))
                         texts = []
                         for slide in prs.slides:
                             for shape in slide.shapes:
@@ -96,23 +106,30 @@ async def _extract_text_from_files(files: List[dict]) -> str:
                         content = "\n".join(texts)
 
                     elif suffix in [".xlsx", ".xlsm"]:
-                        wb = openpyxl.load_workbook(tmp_path)
+                        wb = openpyxl.load_workbook(BytesIO(blob_bytes))
                         sheet = wb.active
                         content = "\n".join(
                             " ".join(str(cell) if cell else "" for cell in row)
                             for row in sheet.iter_rows(values_only=True)
                         )
+
                     elif suffix in [".png", ".jpg", ".jpeg", ".tiff"]:
-                        img = Image.open(tmp_path)
+                        img = Image.open(BytesIO(blob_bytes))
                         content = pytesseract.image_to_string(img)
+
                     else:
-                        with open(tmp_path, "r", encoding="utf-8", errors="ignore") as fh:
-                            content = fh.read()
-                finally:
-                    try:
-                        os.remove(tmp_path)
-                    except Exception:
-                        pass
+                        # fallback plain text (requires temp file because openpyxl/docx won't apply)
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                            tmp.write(blob_bytes)
+                            tmp_path = tmp.name
+                        try:
+                            with open(tmp_path, "r", encoding="utf-8", errors="ignore") as fh:
+                                content = fh.read()
+                        finally:
+                            os.remove(tmp_path)
+
+                except Exception as e:
+                    logger.warning(f"Extraction failed for {f['file_name']}: {e}")
 
                 return content.strip()
 
@@ -124,22 +141,15 @@ async def _extract_text_from_files(files: List[dict]) -> str:
                 logger.warning(f"Extracted no text from {f['file_name']}")
 
         except Exception as e:
-            logger.warning(f" Failed to extract {f.get('file_name')} (path={f.get('file_path')}): {e}")
+            logger.warning(f"Failed to extract {f.get('file_name')} (path={f.get('file_path')}): {e}")
 
-    # Run in parallel using TaskGroup
+    # Run parallel with TaskGroup
     async with anyio.create_task_group() as tg:
         for f in files:
             tg.start_soon(_extract_single, f)
 
     return "\n\n".join(results)
 
-
-
-def _parse_date(s: str) -> datetime | None:
-    try:
-        return datetime.strptime(s, "%Y-%m-%d")
-    except Exception:
-        return None
 
 def _normalize_role_name(name: str) -> str:
     if not name:
@@ -159,13 +169,13 @@ def _rag_retrieve(query: str, k: int = 3, expand_neighbors: bool = True) -> List
     Retrieve semantically similar chunks for RAG.
     Trims results so total tokens <= model context limit (with buffer).
     """
-    
+    global emb_model
+
     if not search_client or not client:
         return []
 
     try:
         # Embedding for query
-        emb_model = getattr(config, "AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "text-embedding-3-large")
         q_emb = client.embeddings.create(model=emb_model, input=query).data[0].embedding
 
         # Vector query
@@ -174,7 +184,6 @@ def _rag_retrieve(query: str, k: int = 3, expand_neighbors: bool = True) -> List
             fields="text_vector",
         )
 
-        # Hybrid search
         results = search_client.search(
             search_text=query,
             vector_queries=[vector_query],
@@ -222,7 +231,7 @@ def _rag_retrieve(query: str, k: int = 3, expand_neighbors: bool = True) -> List
             grouped.setdefault(h["parent_id"], []).append(h)
 
         # ---- Token budget check ----
-        model_name = "gpt-4o" 
+        model_name = deployment   # ✅ fixed
         tokenizer = tiktoken.encoding_for_model(model_name)
         context_limit = 128000
         max_tokens = context_limit - 4000 
@@ -256,6 +265,7 @@ def _rag_retrieve(query: str, k: int = 3, expand_neighbors: bool = True) -> List
 
 # ---------- Prompt ----------
 def _build_scope_prompt(rfp_text: str, kb_chunks: List[str], project=None, model_name: str = "gpt-4o") -> str:
+    import datetime, tiktoken
 
     # Tokenizer
     tokenizer = tiktoken.encoding_for_model(model_name)
@@ -305,6 +315,8 @@ def _build_scope_prompt(rfp_text: str, kb_chunks: List[str], project=None, model
         f"Duration (months): {duration or '(infer if missing)'}\n\n"
     )
 
+    today_str = datetime.date.today().isoformat()  # yyyy-mm-dd
+
     # ---------- Final Prompt ----------
     return (
         "You are an expert AI project planner.\n"
@@ -324,12 +336,11 @@ def _build_scope_prompt(rfp_text: str, kb_chunks: List[str], project=None, model
         "  },\n"
         '  "activities": [\n'
         '    {\n'
-        '      "id": int,\n'
-        '      "story": string | null,\n'
+        '      "ID": int,\n'
         '      "Activities": string,\n'
         '      "Description": string | null,\n'
         '      "Owner": string | null,\n'
-        '      "Depends on": string | null,\n'
+        '      "Resources": string | null,\n'
         '      "Start Date": "yyyy-mm-dd",\n'
         '      "End Date": "yyyy-mm-dd",\n'
         '      "Effort Months": int\n'
@@ -337,164 +348,183 @@ def _build_scope_prompt(rfp_text: str, kb_chunks: List[str], project=None, model
         "  ],\n"
         '  "resourcing_plan": []\n'
         "}\n\n"
-        "Rules:\n"
-        "start date of first activity should be from today date"
-        "-`complexity` should be simple or medium or large.\n "
-        "-`Duration` in months. and should less than 1-24 months \n"
-        "-` story' is user story about that activity.\n"
-        "- `Owner` is person responsible for managing that particular activity give me only roles not names (used for costing) .\n"
-        "- `Depends on` are the roles who will execute that activity.only roles not names (used for costing).\n"
-        "- Do NOT include the Owner again inside `Depends on`. They must be distinct.\n"
-        "- Only if `Depends on` is completely missing, then use the Owner as a fallback.\n"
-        "- `Duration` is number of months. Use real month names (Jan 2025, Feb 2025,...)\n"
-        "- Use 5–10 activities and 3–10 resources.\n"
-        "- Activities use months (Effort Months).\n"
-        "- Use small integer IDs starting from 1.\n"
-        "- Use USD for rate.\n"
-        "- Keep all field names exactly as in the schema.\n\n"
+        f"Rules:\n"
+        f"- The first activity must always start today ({today_str}).\n"
+        "  If an activity has no dependent on another acticity, it should start in parallel with other independent activities.\n"
+        "- Always allow maximum parallel execution to minimize total project duration.\n"
+        "- Project duration must always be **under 12 months** (add more resources if needed).\n"
+        "- Auto-calculate **End Date = Start Date + Effort Months**.\n"
+        "- Auto-calculate **overview.Duration** as the total span in months "
+        "from the earliest Start Date to the latest End Date.\n"
+        "- `Complexity` should be simple, medium, or large.\n"
+        "- `Owner` is always a role who manages that particular activity (not a personal name).\n"
+        "- `Resources` must contain only roles which are required for that particular activity, distinct from `Owner`.\n"
+        "- If `Resources` is missing, fallback to the same `Owner` role.\n"
+        "- Use less activities and resources as much as possible.\n"
+        "- Effort Months should be small integers 0.5 to 2 months not more than this.\n"
+        "- IDs must start from 1 and increment sequentially.\n"
+        "- Use USD for all rates.\n"
+        "- Keep all field names exactly as in the schema.\n"
+
         f"{user_context}"
         f"RFP / Project Files Content:\n{rfp_text}\n\n"
         f"Knowledge Base Context (for enrichment only):\n{kb_context}\n"
     )
 
 
-
 # Post-clean (raw AI output)
-def _clean_scope(data: Dict[str, Any], project=None) -> Dict[str, Any]:
+
+
+def _parse_date_safe(val: Any, fallback: datetime = None) -> datetime:
+    """Try to parse a date string; return fallback if invalid."""
+    if not val:
+        return fallback
+    try:
+        return datetime.strptime(str(val), "%Y-%m-%d")
+    except Exception:
+        return fallback
+
+def _safe_str(val: Any) -> str:
+    return str(val).strip() if val is not None else ""
+
+def _to_float(val: Any, default: float = 0.0) -> float:
+    try:
+        return float(val)
+    except Exception:
+        return default
+
+
+# --- Cleaner ---
+
+def clean_scope(data: Dict[str, Any], project=None) -> Dict[str, Any]:
     if not isinstance(data, dict):
         return {}
 
-    today = datetime.now()
-    cursor = 0
-    min_start, max_end = None, None
-    resource_month_map: Dict[str, float] = {}
-    missing_roles: Dict[str, float] = {}
-    id_to_owner = {str(a.get("id") or a.get("ID")): a.get("Owner") for a in data.get("activities") or []}
+    ist = pytz.timezone("Asia/Kolkata")
+    today = datetime.now(ist).replace(hour=0, minute=0, second=0, microsecond=0)
 
-    # ACTIVITIES
-    activities = []
-    for idx, a in enumerate(data.get("activities", []) or [], start=1):
-        a["id"] = idx
-        months_effort = max(1.0, float(a.get("Effort Months") or 1))
-        a["Effort Months"] = months_effort
+    activities: List[Dict[str, Any]] = []
+    start_dates, end_dates = [], []
+    role_month_map: Dict[str, Dict[str, float]] = {}
+    role_order: List[str] = []
 
-        # Default Owner
-        if not a.get("Owner"):
-            a["Owner"] = "Unassigned"
+    # --- Helper: compute monthly allocation based on actual days in month ---
+    def month_effort(s: datetime, e: datetime) -> Dict[str, float]:
+        cur = s
+        month_eff = {}
+        while cur <= e:
+            year, month = cur.year, cur.month
+            days_in_month = monthrange(year, month)[1]
+            start_day = cur.day if cur.month == s.month else 1
+            end_day = e.day if cur.month == e.month else days_in_month
+            days_count = end_day - start_day + 1
+            month_eff[f"{cur.strftime('%b %Y')}"] = round(days_count / 30.0, 2)
+            # move to next month
+            if month == 12:
+                cur = datetime(year + 1, 1, 1)
+            else:
+                cur = datetime(cur.year, cur.month + 1, 1)
+        return month_eff
 
-        # Collect raw Depends on
-        dep_raw = a.get("Depends on") or ""
-        dep_list = [r.strip() for r in dep_raw.split(",") if r.strip()]
-        if not dep_list:
-            dep_list = [a.get("Owner") or "TBD"]
+    # --- Process activities ---
+    for idx, a in enumerate(data.get("activities") or [], start=1):
+        owner = a.get("Owner") or "Unassigned"
 
-        # Resolve IDs -> Owners if AI used IDs in Depends on
-        dep_list = [id_to_owner.get(d, d) for d in dep_list]
+        # Parse dependencies
+        raw_deps = [d.strip() for d in str(a.get("Resources") or "").split(",") if d.strip()]
 
-        # Merge Owner + Depends into a single set
-        roles_for_activity = set(dep_list + [a["Owner"]])
+        # 🚫 Remove owner from resources if duplicated
+        raw_deps = [r for r in raw_deps if r.lower() != owner.lower()]
 
-        normalized_deps = []
-        for r in roles_for_activity:
-            normalized = _normalize_role_name(r)
-            if normalized == "TBD":
-                role = (r or "Unknown Role").title().strip()
-                missing_roles[role] = 2000.0
-                normalized = role
+        # Owner always included, then other resources
+        roles = [owner] + raw_deps
 
-            # Add effort once per unique role
-            resource_month_map[normalized] = resource_month_map.get(normalized, 0) + months_effort
+        s = _parse_date_safe(a.get("Start Date"), today)
+        e = _parse_date_safe(a.get("End Date"), s + timedelta(days=30))
+        if e < s:
+            e = s + timedelta(days=30)
 
-            # Keep for cleaned Depends on 
-            if r != a["Owner"]:
-                normalized_deps.append(normalized)
+        # --- allocate per month (no splitting among roles) ---
+        month_alloc = month_effort(s, e)
+        for role in roles:
+            if role not in role_month_map:
+                role_month_map[role] = {}
+                role_order.append(role)
+            for m, eff in month_alloc.items():
+                role_month_map[role][m] = role_month_map[role].get(m, 0.0) + eff
 
-        a["Depends on"] = ", ".join(normalized_deps)
-
-        # --- Dates ---
-        start = _parse_date(a.get("Start Date") or "")
-        end = _parse_date(a.get("End Date") or "")
-
-        if not start:
-            start = today + timedelta(days=int(cursor * 30))
-        if not end:
-            end = start + timedelta(days=int(months_effort * 30) - 1)
-
-        # Ensure end is not before start
-        if end < start:
-            end = start + timedelta(days=int(months_effort * 30) - 1)
-
-        a["Start Date"], a["End Date"] = start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")
-        cursor += months_effort
-
-        min_start = min(min_start or start, start)
-        max_end = max(max_end or end, end)
-        activities.append(a)
-
-    # --- Shift to today if first activity is in the past ---
-    if min_start and min_start < today:
-        shift_days = (today - min_start).days
-        for a in activities:
-            s = _parse_date(a["Start Date"])
-            e = _parse_date(a["End Date"])
-            if s and e:
-                s, e = s + timedelta(days=shift_days), e + timedelta(days=shift_days)
-                a["Start Date"], a["End Date"] = s.strftime("%Y-%m-%d"), e.strftime("%Y-%m-%d")
-        min_start = today
-        max_end = max(_parse_date(a["End Date"]) for a in activities if a.get("End Date"))
-
-    data["activities"] = activities
-
-    # DURATION & MONTH LABELS
-    user_duration = int(data.get("overview", {}).get("Duration") or 0)
-    months = user_duration if user_duration > 0 else max(
-        1, round(((max_end or today) - (min_start or today)).days / 30)
-    )
-    base_date = min_start or today
-    month_labels = [(base_date + relativedelta(months=i)).strftime("%b %Y") for i in range(months)]
-
-    # RESOURCING PLAN (UNIQUE ROLES)
-    resourcing_plan = []
-    seen_roles = set()
-    for rname, total_months in resource_month_map.items():
-        if rname in seen_roles:
-            continue
-        seen_roles.add(rname)
-
-        eff = max(1, round(total_months))
-        rate = ROLE_RATE_MAP.get(rname, missing_roles.get(rname, 2000.0))
-        cost = round(rate * eff, 2)
-
-        # Spread efforts across months
-        base, rem = divmod(eff, months)
-        monthly = [base + (1 if j < rem else 0) for j in range(months)]
-
-        resourcing_plan.append({
-            "id": len(resourcing_plan) + 1,
-            "Resources": rname,
-            "Rate/month": rate,
-            "Efforts": eff,
-            **{m: v for m, v in zip(month_labels, monthly)},
-            "cost": cost
+        dur_days = max(1, (e - s).days)
+        activities.append({
+            "ID": idx,
+            "Activities": _safe_str(a.get("Activities")),
+            "Description": _safe_str(a.get("Description")),
+            "Owner": owner,
+            "Resources": ", ".join(raw_deps), 
+            "Start Date": s,
+            "End Date": e,
+            "Effort Months": round(dur_days / 30.0, 2),
         })
 
+        start_dates.append(s)
+        end_dates.append(e)
+
+    # --- Sort activities ---
+    activities.sort(key=lambda x: x["Start Date"])
+    for idx, a in enumerate(activities, start=1):
+        a["ID"] = idx
+        a["Start Date"] = a["Start Date"].strftime("%Y-%m-%d")
+        a["End Date"] = a["End Date"].strftime("%Y-%m-%d")
+
+    # --- Project span & month labels ---
+    min_start = min(start_dates) if start_dates else today
+    max_end = max(end_dates) if end_dates else min_start
+    duration = max(1.0, round(max(1, (max_end - min_start).days) / 30.0, 2))
+
+    month_labels = []
+    cur = datetime(min_start.year, min_start.month, 1)
+    while cur <= max_end:
+        month_labels.append(cur.strftime("%b %Y"))
+        if cur.month == 12:
+            cur = datetime(cur.year + 1, 1, 1)
+        else:
+            cur = datetime(cur.year, cur.month + 1, 1)
+
+    # --- Resourcing Plan ---
+    resourcing_plan = []
+    for idx, role in enumerate(role_order, start=1):
+        month_map = role_month_map[role]
+        month_efforts = {m: round(month_map.get(m, 0.0), 2) for m in month_labels}
+        total_effort = round(sum(month_efforts.values()), 2)
+        if total_effort <= 0:
+            continue
+        rate = ROLE_RATE_MAP.get(role, 2000.0)
+        cost = round(total_effort * rate, 2)
+        plan_entry = {
+            "ID": idx,
+            "Resources": role,
+            "Rate/month": rate,
+            **month_efforts,
+            "Efforts": total_effort,
+            "Cost": cost
+        }
+        resourcing_plan.append(plan_entry)
+
+    # --- Overview ---
+    ov = data.get("overview") or {}
+    data["overview"] = {
+        "Project Name": _safe_str(ov.get("Project Name") or getattr(project, "name", "Untitled Project")),
+        "Domain": _safe_str(ov.get("Domain") or getattr(project, "domain", "")),
+        "Complexity": _safe_str(ov.get("Complexity") or getattr(project, "complexity", "")),
+        "Tech Stack": _safe_str(ov.get("Tech Stack") or getattr(project, "tech_stack", "")),
+        "Use Cases": _safe_str(ov.get("Use Cases") or getattr(project, "use_cases", "")),
+        "Compliance": _safe_str(ov.get("Compliance") or getattr(project, "compliance", "")),
+        "Duration": duration,
+        "Generated At": datetime.now(ist).strftime("%Y-%m-%d %H:%M %Z"),
+    }
+
+    data["activities"] = activities
     data["resourcing_plan"] = resourcing_plan
-    data.setdefault("overview", {})["Duration"] = months
-    data["_missing_roles"] = missing_roles
-
-    # MERGE USER-PROVIDED PROJECT FIELDS
-    if project:
-        ov = data.setdefault("overview", {})
-        if getattr(project, "name", None):         ov["Project Name"] = project.name
-        if getattr(project, "domain", None):       ov["Domain"] = project.domain
-        if getattr(project, "complexity", None):   ov["Complexity"] = project.complexity
-        if getattr(project, "tech_stack", None):   ov["Tech Stack"] = project.tech_stack
-        if getattr(project, "use_cases", None):    ov["Use Cases"] = project.use_cases
-        if getattr(project, "compliance", None):   ov["Compliance"] = project.compliance
-        if getattr(project, "duration", None):     ov["Duration"] = project.duration or ov.get("Duration", months)
-
     return data
-
 
 
 async def generate_project_scope(project) -> dict:
@@ -502,7 +532,7 @@ async def generate_project_scope(project) -> dict:
         logger.warning("Azure OpenAI not configured")
         return {}
 
-    model_name = "gpt-4o"
+    model_name = deployment
     tokenizer = tiktoken.encoding_for_model(model_name)
     context_limit = 128000
     max_total_tokens = context_limit - 4000
@@ -594,7 +624,126 @@ async def generate_project_scope(project) -> dict:
             )
         )
         raw = _extract_json(resp.choices[0].message.content.strip())
-        return _clean_scope(raw, project=project)
+        return clean_scope(raw, project=project)
     except Exception as e:
         logger.error(f"Azure OpenAI scope generation failed: {e}")
         return {}
+    
+
+
+async def regenerate_from_instructions(draft: dict, instructions: str) -> dict:
+    """
+    If instructions are provided → call Azure OpenAI to regenerate.
+    If no instructions → just clean the draft.
+    """
+    if not instructions or not instructions.strip():
+        return clean_scope(draft)
+
+    if client is None or deployment is None:
+        logger.warning("Azure OpenAI not configured")
+        return clean_scope(draft)
+
+    prompt = f"""
+You are a project scoping assistant.
+You are given the current draft JSON scope and user instructions.
+Update the JSON accordingly while keeping valid JSON structure.
+
+Instructions:
+{instructions}
+
+Draft Scope (JSON):
+{json.dumps(draft, indent=2)}
+
+Return ONLY valid JSON.
+"""
+
+    try:
+        resp = await anyio.to_thread.run_sync(
+            lambda: client.chat.completions.create(
+                model=deployment,
+                messages=[
+                    {"role": "system", "content": "You are a strict JSON generator."},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.3,
+            )
+        )
+
+        raw_text = resp.choices[0].message.content.strip()
+        updated = _extract_json(raw_text)
+        return clean_scope(updated)
+
+    except Exception as e:
+        logger.error(f"Regeneration failed: {e}")
+        return clean_scope(draft)
+
+
+async def finalize_scope(
+    db: AsyncSession,
+    project_id: str,
+    scope_data: dict
+) -> tuple[models.ProjectFile, dict]:
+    """
+    Clean and finalize scope JSON, update project metadata, and store finalized_scope.json in blob.
+    """
+
+    logger.info(f"📌 Finalizing scope (engine) for project {project_id}...")
+
+    #  Clean the draft
+    cleaned = clean_scope(scope_data)
+    overview = cleaned.get("overview", {})
+
+    # ---- Update project metadata ----
+    result = await db.execute(
+        select(models.Project)
+        .options(selectinload(models.Project.files))
+        .filter(models.Project.id == project_id)
+    )
+    db_project = result.scalars().first()
+
+    if db_project and overview:
+        db_project.name = overview.get("Project Name") or db_project.name
+        db_project.domain = overview.get("Domain") or db_project.domain
+        db_project.complexity = overview.get("Complexity") or db_project.complexity
+        db_project.tech_stack = overview.get("Tech Stack") or db_project.tech_stack
+        db_project.use_cases = overview.get("Use Cases") or db_project.use_cases
+        db_project.compliance = overview.get("Compliance") or db_project.compliance
+        db_project.duration = str(overview.get("Duration") or db_project.duration)
+        await db.commit()
+        await db.refresh(db_project)
+
+    # ---- Remove old finalized scope if exists ----
+    result = await db.execute(
+        select(models.ProjectFile).filter(
+            models.ProjectFile.project_id == project_id,
+            models.ProjectFile.file_name == "finalized_scope.json"
+        )
+    )
+    old_file = result.scalars().first()
+    if old_file:
+        try:
+            await azure_blob.delete_blob(old_file.file_path)
+            await db.delete(old_file)
+            await db.commit()
+        except Exception as e:
+            logger.warning(f" Failed to delete old finalized_scope.json: {e}")
+
+    # ---- Upload new finalized scope ----
+    blob_name = f"{PROJECTS_BASE}/{project_id}/finalized_scope.json"
+    await azure_blob.upload_bytes(
+        json.dumps(cleaned, ensure_ascii=False, indent=2).encode("utf-8"),
+        blob_name
+    )
+
+    db_file = models.ProjectFile(
+        project_id=project_id,
+        file_name="finalized_scope.json",
+        file_path=blob_name,
+    )
+    db.add(db_file)
+    await db.commit()
+    await db.refresh(db_file)
+
+    logger.info(f" Finalized scope stored for project {project_id}")
+    return db_file, {**cleaned, "_finalized": True}
+

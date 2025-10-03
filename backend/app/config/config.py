@@ -14,6 +14,8 @@ APP_PORT = int(os.getenv("APP_PORT"))
 # Database (sync + async)
 DATABASE_URL = os.getenv("DATABASE_URL")
 
+FRONTEND_URL = "http://localhost:5173"
+
 # Auth / JWT
 SECRET_KEY = os.getenv("SECRET_KEY")
 ALGORITHM = os.getenv("ALGORITHM", "HS256")

@@ -43,6 +43,11 @@ def get_azure_openai_deployment() -> Optional[str]:
     return getattr(config, "AZURE_OPENAI_DEPLOYMENT", None)
 
 
+
+def get_azure_openai_embedding_deployment() -> Optional[str]:
+    return getattr(config, "AZURE_OPENAI_EMBEDDING_DEPLOYMENT", None)
+
+
 # Azure AI Search Client
 @lru_cache(maxsize=1)
 def get_search_client() -> Optional[SearchClient]:

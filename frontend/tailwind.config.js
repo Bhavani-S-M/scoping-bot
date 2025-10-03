@@ -4,11 +4,11 @@ export default {
     "./index.html",
     "./src/**/*.{js,jsx,ts,tsx}",
   ],
-  darkMode: "class", // 👈 enables dark mode via .dark class
+  darkMode: "class",
   theme: {
     extend: {
       colors: {
-        // 🌞 Light mode palette
+        //  Light mode palette
         primary: "#0d9488",   // Teal-600
         secondary: "#f97316", // Orange-500
         accent: "#14b8a6",    // Teal-500
@@ -16,7 +16,7 @@ export default {
         background: "#f1f5f9", // Slate-50
         surface: "#ffffff",   // White
 
-        // 🌙 Dark mode palette
+        // Dark mode palette
         dark: {
           primary: "#2dd4bf",   // Teal-400
           secondary: "#fb923c", // Orange-400

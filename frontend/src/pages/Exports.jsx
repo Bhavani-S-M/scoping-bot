@@ -48,8 +48,12 @@ const formatCurrency = (v) => {
 export default function Exports() {
   const { id } = useParams();
   const location = useLocation();
-  const { finalizeScope } = useProjects();
-  const { previewPdf, getPdfBlob } = useExport();
+  const { finalizeScope, getFinalizedScope } = useProjects();
+  const { previewPdf, getPdfBlob, regenerateScope } = useExport();
+  const [finalizing, setFinalizing] = useState(false);
+
+
+
 
   const incomingDraft = location.state?.draftScope || null;
 
@@ -88,6 +92,67 @@ export default function Exports() {
     pdf: { loading: false, progress: 0, controller: null },
     all: { loading: false, progress: 0, controller: null },
   });
+  const [regenPrompt, setRegenPrompt] = useState("");
+  const [regenLoading, setRegenLoading] = useState(false);
+  const textareaRef = useRef(null);
+
+  const handleInputChange = (e) => {
+    setRegenPrompt(e.target.value);
+
+    // Auto grow & shrink
+    const el = textareaRef.current;
+    if (el) {
+      el.style.height = "auto"; // reset to shrink
+      el.style.height = `${el.scrollHeight}px`; // expand to fit
+    }
+  };
+  const updateParsedDraft = (section, newRows) => {
+    if (!parsedDraft) return;
+
+    if (section === "overview") {
+      // turn rows [["Domain","Fintech"],...] back into object
+      const newOverview = {};
+      newRows.forEach(([k, v]) => {
+        if (k) newOverview[k] = v;
+      });
+      const newDraft = { ...parsedDraft, overview: newOverview };
+      setJsonText(JSON.stringify(newDraft, null, 2));
+    } else {
+      // normal array section
+      const headers = excelPreview.headers;
+      const arr = newRows.map((row) =>
+        headers.reduce((obj, h, idx) => {
+          obj[h] = row[idx];
+          return obj;
+        }, {})
+      );
+      const newDraft = { ...parsedDraft, [section]: arr };
+      setJsonText(JSON.stringify(newDraft, null, 2));
+    }
+  };
+
+
+  const handleRegenerate = async () => {
+    if (!parsedDraft || !regenPrompt.trim()) return;
+    try {
+      setRegenLoading(true);
+
+      // ✅Correct usage: pass id, draft, and instructions separately
+      const updated = await regenerateScope(id, parsedDraft, regenPrompt);
+
+      setJsonText(JSON.stringify(updated, null, 2));
+      setIsFinalized(false);
+
+      setRegenPrompt(""); // clear input
+    } catch (err) {
+      toast.error("Failed to regenerate scope");
+      console.error(err);
+    } finally {
+      setRegenLoading(false);
+    }
+  };
+
+
 
   const startDownload = (key, controller) =>
     setDownloadState((s) => ({
@@ -121,21 +186,27 @@ export default function Exports() {
         const res = await projectApi.getProject(id);
         setProject(res.data);
 
-        try {
-          const finalizedData = await exportApi.exportToJson(id);
+        // ✅ Only mark finalized if real finalized data exists
+        const finalizedData = await getFinalizedScope(id);
+
+        if (finalizedData) {
           setJsonText(JSON.stringify(finalizedData, null, 2));
           setIsFinalized(true);
-        } catch {
-          if (incomingDraft) setJsonText(JSON.stringify(incomingDraft, null, 2));
+        } else if (incomingDraft) {
+          setJsonText(JSON.stringify(incomingDraft, null, 2));
+          setIsFinalized(false);
+        } else {
+          setJsonText("");
           setIsFinalized(false);
         }
       } catch (e) {
-        console.error(" Failed to load project:", e);
+        console.error("Failed to load project:", e);
       } finally {
         setLoading(false);
       }
     })();
   }, [id, incomingDraft]);
+
 
   // 🧹 Clear cached PDF on JSON change
   useEffect(() => {
@@ -143,6 +214,17 @@ export default function Exports() {
     lastPdfKeyRef.current = "";
     setPreviewPdfUrl(null);
   }, [jsonText]);
+
+  const prevJsonRef = useRef("");
+  useEffect(() => {
+    // only reset if finalized AND json actually changed by user
+    if (isFinalized && prevJsonRef.current && prevJsonRef.current !== jsonText) {
+      setIsFinalized(false);
+    }
+    prevJsonRef.current = jsonText;
+  }, [jsonText, isFinalized]);
+
+
 
   useEffect(() => {
     return () => {
@@ -247,44 +329,46 @@ export default function Exports() {
     }
   }, [parsedDraft, excelSection, activeTab]);
 
+  // ---------- Handle Finalize Scope ----------
   const handleFinalize = async () => {
     if (!parsedDraft) return;
     try {
-      setLoading(true);
+      setFinalizing(true);
       await finalizeScope(id, parsedDraft);
-      toast.success(" Scope finalized successfully!");
+      toast.success("Scope finalized successfully!");
       setIsFinalized(true);
       setShowSuccessBanner(true);
 
-      const finalizedData = await exportApi.exportToJson(id);
-      setJsonText(JSON.stringify(finalizedData, null, 2));
+      const finalizedData = await getFinalizedScope(id);
+
+      if (finalizedData) setJsonText(JSON.stringify(finalizedData, null, 2));
+
       setPreviewPdfUrl(null);
     } catch (err) {
-      console.error(" Finalize failed:", err);
-      toast.error(" Failed to finalize scope.");
+      console.error("Finalize failed:", err);
+      toast.error("Failed to finalize scope.");
     } finally {
-      setLoading(false);
+      setFinalizing(false);
       setTimeout(() => setShowSuccessBanner(false), 5000);
     }
   };
 
-  // -------- Individual Downloads with Progress + Cancel --------
-  const downloadFile = async (key, fn, filename) => {
+  // ---------- Unified Download Handler ----------
+  const downloadFile = async (key, fetchFn, defaultName, ext) => {
     const controller = new AbortController();
     startDownload(key, controller);
 
     try {
-      const blob = await fn({
+      const blob = await fetchFn({
         signal: controller.signal,
         onDownloadProgress: (e) => {
-          if (e.total) {
-            const percent = Math.round((e.loaded * 100) / e.total);
-            updateProgress(key, percent);
-          }
+          if (e.total) updateProgress(key, Math.round((e.loaded * 100) / e.total));
         },
       });
+
       if (!blob || blob.size === 0) throw new Error("Empty file");
 
+      const filename = safeFileName(defaultName, ext);
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -293,48 +377,58 @@ export default function Exports() {
       URL.revokeObjectURL(url);
 
       finishDownload(key);
-      toast.success(`${filename} downloaded `);
+      toast.success(`${filename} downloaded`);
     } catch (err) {
       if (controller.signal.aborted) {
-        toast.info(`${filename} download cancelled`);
+        toast.info(`${defaultName} download cancelled`);
       } else {
         console.error(err);
-        toast.error(`Failed to download ${filename}`);
+        toast.error(`Failed to download ${defaultName}`);
       }
       resetDownload(key);
     }
   };
 
+  // ---------- Individual Downloads ----------
   const handleDownloadJson = () =>
-  downloadFile(
-    "json",
-    async (opts) => {
-      const data = await exportApi.exportToJson(id, opts);
-      return new Blob([JSON.stringify(data, null, 2)], {
-        type: "application/json",
-      });
-    },
-    `project_${id}.json`
-  );
-
+    downloadFile(
+      "json",
+      async (opts) => {
+        const data = await exportApi.exportToJson(id, opts);
+        return new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      },
+      parsedDraft?.overview?.["Project Name"] || `project_${id}`,
+      "json"
+    );
 
   const handleDownloadExcel = () =>
-    downloadFile("excel", (opts) => exportApi.exportToExcel(id, opts), `project_${id}.xlsx`);
+    downloadFile(
+      "excel",
+      (opts) => exportApi.exportToExcel(id, opts),
+      parsedDraft?.overview?.["Project Name"] || `project_${id}`,
+      "xlsx"
+    );
 
   const handleDownloadPdf = () =>
-    downloadFile("pdf", (opts) => exportApi.exportToPdf(id, opts), `project_${id}.pdf`);
+    downloadFile(
+      "pdf",
+      (opts) => exportApi.exportToPdf(id, opts),
+      parsedDraft?.overview?.["Project Name"] || `project_${id}`,
+      "pdf"
+    );
 
-  // -------- ZIP Download --------
+  // ---------- Download All as ZIP ----------
   const handleDownloadAll = async () => {
     const controller = new AbortController();
     startDownload("all", controller);
 
     try {
       const zip = new JSZip();
+      const projectName = parsedDraft?.overview?.["Project Name"] || `project_${id}`;
 
       // JSON
       const jsonData = await exportApi.exportToJson(id, { signal: controller.signal });
-      zip.file(`project_${id}.json`, JSON.stringify(jsonData, null, 2));
+      zip.file(safeFileName(projectName, "json"), JSON.stringify(jsonData, null, 2));
 
       // Excel
       const excelBlob = await exportApi.exportToExcel(id, {
@@ -343,31 +437,30 @@ export default function Exports() {
           if (e.total) updateProgress("all", Math.round((e.loaded * 100) / e.total));
         },
       });
-      zip.file(`project_${id}.xlsx`, excelBlob);
+      zip.file(safeFileName(projectName, "xlsx"), excelBlob);
 
       // PDF
       const pdfBlob = await exportApi.exportToPdf(id, { signal: controller.signal });
-      zip.file(`project_${id}.pdf`, pdfBlob);
+      zip.file(safeFileName(projectName, "pdf"), pdfBlob);
 
       const content = await zip.generateAsync({ type: "blob" });
-      saveAs(content, `project_${id}_exports.zip`);
+      saveAs(content, safeFileName(projectName, "zip"));
 
       finishDownload("all");
-      toast.success("All files downloaded ");
+      toast.success("All files downloaded");
     } catch (err) {
-      if (controller.signal.aborted) {
-        toast.info("Download all cancelled");
-      } else {
+      if (controller.signal.aborted) toast.info("Download all cancelled");
+      else {
         console.error("Download all failed:", err);
-        toast.error("Failed to download all ");
+        toast.error("Failed to download all files");
       }
       resetDownload("all");
     }
   };
 
-  // 🔹 ProgressBar Component
+  // ProgressBar Component
   const ProgressBar = ({ percent }) => (
-    <div className="w-32 h-2 bg-gray-200 rounded">
+    <div className="w-40 h-5 bg-gray-200 rounded">
       <div
         className="h-2 bg-emerald-500 rounded transition-all"
         style={{ width: `${percent}%` }}
@@ -395,6 +488,53 @@ export default function Exports() {
         </div>
       )}
 
+      <div className="flex flex-col gap-2 rounded-xl border px-4 py-2 bg-white dark:bg-gray-900 shadow-sm">
+        <textarea
+        ref={textareaRef}
+        value={regenPrompt}
+        onChange={handleInputChange}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            handleRegenerate();
+          }
+        }}
+        placeholder="Type your message here..."
+        rows={1}
+        className="w-full min-h-[1.25rem] bg-transparent border-none outline-none focus:ring-0 focus:outline-none text-sm text-gray-800 dark:text-gray-200 placeholder-gray-400 resize-none overflow-hidden leading-tight"
+      />
+
+        <button
+          type="button"
+          onClick={handleRegenerate}
+          disabled={regenLoading || !parsedDraft}
+          className={`self-end p-2 rounded-full flex items-center justify-center transition ${
+            regenLoading
+              ? "bg-emerald-300 cursor-not-allowed"
+              : "bg-emerald-600 hover:bg-emerald-700"
+          }`}
+        >
+          {regenLoading ? (
+            <Loader2 className="w-5 h-5 text-white animate-spin" />
+          ) : (
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              className="w-5 h-5 text-white"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={2}
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M4 4l16 8-16 8 4-8-4-8z"
+              />
+            </svg>
+          )}
+        </button>
+      </div>
+
       {/* Tabs */}
       <div className="flex gap-4 border-b border-gray-200 dark:border-gray-700">
         {TABS.map((t) => (
@@ -411,7 +551,7 @@ export default function Exports() {
           </button>
         ))}
       </div>
-
+      
       {/* JSON */}
       {activeTab === "json" && (
         <div>
@@ -428,15 +568,16 @@ export default function Exports() {
           )}
           <div className="mt-4 flex gap-3 flex-wrap items-center">
             <button
+              type="button" 
               onClick={handleFinalize}
-              disabled={!parsedDraft || loading}
+              disabled={!parsedDraft || finalizing}
               className={`px-4 py-2 rounded-lg text-white flex items-center gap-2 ${
-                loading
+                finalizing
                   ? "bg-emerald-400 cursor-not-allowed"
                   : "bg-emerald-600 hover:bg-emerald-700"
               }`}
             >
-              {loading ? (
+              {finalizing ? (
                 <>
                   <Loader2 className="w-5 h-5 animate-spin" /> Finalizing…
                 </>
@@ -446,6 +587,7 @@ export default function Exports() {
                 </>
               )}
             </button>
+
 
             {isFinalized && (
               <div className="flex items-center gap-2">
@@ -534,6 +676,7 @@ export default function Exports() {
                             : "bg-gray-50"
                         } hover:bg-emerald-50 transition`}
                       >
+
                         {row.map((cell, j) => {
                           const header = excelPreview.headers[j]?.toLowerCase();
                           let statusColor = "";
@@ -548,34 +691,63 @@ export default function Exports() {
                           }
 
                           return (
-                            <td
-                              key={j}
-                              className={`px-3 py-2 border whitespace-nowrap max-w-[200px] truncate ${
-                                isTotal
-                                  ? "font-bold"
-                                  : statusColor
-                                  ? "font-medium text-center"
-                                  : ""
-                              }`}
-                              title={cell}
-                            >
-                              {statusColor && !isTotal ? (
-                                <span
-                                  className={`px-2 py-1 rounded-md text-xs ${statusColor}`}
-                                >
-                                  {cell || "—"}
-                                </span>
-                              ) : (
+                            <td key={j} className="px-3 py-2 border">
+                              {isTotal ? (
                                 cell
+                              ) : (
+                                <input
+                                  type="text"
+                                  value={cell}
+                                  onChange={(e) => {
+                                    const newRows = [...excelPreview.rows];
+                                    newRows[i][j] = e.target.value;
+                                    setExcelPreview({ ...excelPreview, rows: newRows });
+                                    updateParsedDraft(excelSection, newRows); // keep JSON in sync
+                                  }}
+                                  className="w-full bg-transparent border-none focus:ring-0 text-sm px-1 py-0.5 h-4"
+
+                                />
                               )}
                             </td>
+
                           );
                         })}
+                        <td className="px-2 py-1 border">
+                        {!isTotal && (
+                          <button
+                            onClick={() => {
+                              const newRows = excelPreview.rows.filter((_, idx) => idx !== i);
+                              setExcelPreview({ ...excelPreview, rows: newRows });
+                              updateParsedDraft(excelSection, newRows);
+                            }}
+                            className="text-red-500 text-sm"
+                          >
+                            Delete
+                          </button>
+                        )}
+                      </td>
+
                       </tr>
+                      
+                      
                     );
                   })}
                 </tbody>
               </table>
+              <div className="flex gap-2 mt-2">
+                <button
+                  onClick={() => {
+                    const emptyRow = excelPreview.headers.map(() => "");
+                    const newRows = [...excelPreview.rows, emptyRow];
+                    setExcelPreview({ ...excelPreview, rows: newRows });
+                    updateParsedDraft(excelSection, newRows);
+                  }}
+                  className="px-3 py-1 bg-emerald-600 text-white rounded"
+                >
+                  Add New
+                </button>
+              </div>
+
             </div>
           ) : (
             <p className="text-gray-500 text-sm">No table data available.</p>
@@ -615,7 +787,6 @@ export default function Exports() {
       )}
 
       {/* PDF */}
-            {/* PDF */}
       {activeTab === "pdf" && (
         <div className="space-y-4">
           {previewPdfUrl ? (

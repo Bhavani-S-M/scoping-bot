@@ -2,7 +2,7 @@ from typing import List, Optional, Union
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy import select
-import uuid, logging, json
+import uuid, logging
 from fastapi import UploadFile
 from app import models, schemas
 from app.utils import azure_blob as blob_utils
@@ -13,7 +13,18 @@ logger = logging.getLogger(__name__)
 PROJECTS_BASE = "projects"
 
 
+def _attach_file_urls(file: models.ProjectFile):
+    """Helper: add download_url and preview_url to file objects"""
+    if not hasattr(file, "download_url"):
+        file.download_url = f"/blobs/download/{file.file_path}?base={PROJECTS_BASE}"
+    if not hasattr(file, "preview_url"):
+        file.preview_url = f"/blobs/preview/{file.file_path}?base={PROJECTS_BASE}"
+    return file
+
+
+# -------------------------
 # Projects CRUD
+# -------------------------
 async def list_projects(db: AsyncSession, owner_id: uuid.UUID) -> List[models.Project]:
     result = await db.execute(
         select(models.Project)
@@ -22,6 +33,10 @@ async def list_projects(db: AsyncSession, owner_id: uuid.UUID) -> List[models.Pr
         .order_by(models.Project.created_at.desc())
     )
     projects = result.scalars().all()
+
+    for p in projects:
+        p.files = [_attach_file_urls(f) for f in p.files]
+
     logger.info(f"📂 Listed {len(projects)} projects for owner {owner_id}")
     return projects
 
@@ -35,7 +50,9 @@ async def get_project(
         .filter(models.Project.id == project_id, models.Project.owner_id == owner_id)
     )
     project = result.scalars().first()
+
     if project:
+        project.files = [_attach_file_urls(f) for f in project.files]
         logger.info(f"Loaded project {project_id} for owner {owner_id}")
     else:
         logger.warning(f" Project {project_id} not found or access denied for owner {owner_id}")
@@ -58,6 +75,14 @@ async def create_project(
         await add_project_files(db, db_project.id, files)
         logger.info(f" Attached {len(files)} files to project {db_project.id}")
 
+    # reload with files
+    result = await db.execute(
+        select(models.Project)
+        .options(selectinload(models.Project.files))
+        .filter(models.Project.id == db_project.id)
+    )
+    db_project = result.scalars().first()
+    db_project.files = [_attach_file_urls(f) for f in db_project.files]
     return db_project
 
 
@@ -76,8 +101,8 @@ async def update_project(
 
 async def delete_project(db: AsyncSession, db_project: models.Project) -> bool:
     await db.refresh(db_project, attribute_names=["files"])
-
     logger.info(f"🗑 Deleting project {db_project.id} and {len(db_project.files)} attached files...")
+
     for f in db_project.files:
         try:
             if f.file_path:
@@ -107,7 +132,9 @@ async def delete_all_projects(db: AsyncSession, owner_id: uuid.UUID) -> int:
     return count
 
 
+# -------------------------
 # Project Files CRUD
+# -------------------------
 async def add_project_file(
     db: AsyncSession,
     project_id: uuid.UUID,
@@ -123,10 +150,8 @@ async def add_project_file(
         db.add(db_file)
         await db.commit()
         await db.refresh(db_file)
-        logger.info(f"📎 Added existing file {db_file.file_name} to project {project_id}")
-        return db_file
+        return _attach_file_urls(db_file)
 
-    # Upload user file to blob under projects/{project_id}/
     safe_name = upload_file.filename.replace(" ", "_")
     unique_name = f"{PROJECTS_BASE}/{project_id}/{uuid.uuid4()}_{safe_name}"
 
@@ -141,8 +166,7 @@ async def add_project_file(
     db.add(db_file)
     await db.commit()
     await db.refresh(db_file)
-    logger.info(f" Uploaded and attached file {upload_file.filename} -> {unique_name}")
-    return db_file
+    return _attach_file_urls(db_file)
 
 
 async def add_project_files(
@@ -164,16 +188,13 @@ async def list_project_files(db: AsyncSession, project_id: uuid.UUID) -> List[mo
         .order_by(models.ProjectFile.uploaded_at.desc())
     )
     files = result.scalars().all()
-    logger.info(f" Listed {len(files)} files for project {project_id}")
-    return files
+    return [_attach_file_urls(f) for f in files]
 
 
+# -------------------------
 # Finalized Scope Utilities
-
+# -------------------------
 async def has_finalized_scope(db: AsyncSession, project_id: uuid.UUID) -> bool:
-    """
-    Check in DB if finalized_scope.json exists for a given project.
-    """
     result = await db.execute(
         select(models.ProjectFile).filter(
             models.ProjectFile.project_id == project_id,
@@ -181,77 +202,3 @@ async def has_finalized_scope(db: AsyncSession, project_id: uuid.UUID) -> bool:
         )
     )
     return result.scalar_one_or_none() is not None
-
-
-# Finalize Scope
-
-async def finalize_scope(
-    db: AsyncSession,
-    project_id: uuid.UUID,
-    scope_data: dict
-) -> tuple[models.ProjectFile, dict]:
-    from app.utils.export import normalize_scope
-
-    logger.info(f" Finalizing scope for project {project_id}...")
-
-    # Normalize scope data
-    normalized = normalize_scope(scope_data)
-    overview = normalized.get("overview", {})
-
-    # Update Project table fields from overview
-    result = await db.execute(
-        select(models.Project)
-        .options(selectinload(models.Project.files))
-        .filter(models.Project.id == project_id)
-    )
-    db_project = result.scalars().first()
-
-    if db_project and overview:
-        db_project.name = overview.get("Project Name") or db_project.name
-        db_project.domain = overview.get("Domain") or db_project.domain
-        db_project.complexity = overview.get("Complexity") or db_project.complexity
-        db_project.tech_stack = overview.get("Tech Stack") or db_project.tech_stack
-        db_project.use_cases = overview.get("Use Cases") or db_project.use_cases
-        db_project.compliance = overview.get("Compliance") or db_project.compliance
-        db_project.duration = str(overview.get("Duration") or db_project.duration)
-        await db.commit()
-        await db.refresh(db_project)
-        logger.info(f"Updated project {project_id} metadata from finalized scope")
-
-    # Remove old finalized scope if exists
-    result = await db.execute(
-        select(models.ProjectFile)
-        .filter(
-            models.ProjectFile.project_id == project_id,
-            models.ProjectFile.file_name == "finalized_scope.json"
-        )
-    )
-    old_file = result.scalars().first()
-    if old_file:
-        try:
-            await blob_utils.delete_blob(old_file.file_path)
-            await db.delete(old_file)
-            await db.commit()
-            logger.info(f" Removed old finalized_scope.json for project {project_id}")
-        except Exception as e:
-            logger.warning(f" Failed to delete old finalized_scope.json from blob: {e}")
-
-    # Upload new finalized_scope.json to blob
-    blob_name = f"{PROJECTS_BASE}/{project_id}/finalized_scope.json"
-    await blob_utils.upload_bytes(
-        json.dumps(normalized, ensure_ascii=False, indent=2).encode("utf-8"),
-        blob_name
-    )
-    logger.info(f" Uploaded new finalized_scope.json -> {blob_name}")
-
-    db_file = models.ProjectFile(
-        project_id=project_id,
-        file_name="finalized_scope.json",
-        file_path=blob_name,
-    )
-    db.add(db_file)
-    await db.commit()
-    await db.refresh(db_file)
-
-    logger.info(f" Finalized scope stored for project {project_id}")
-    return db_file, {**normalized, "_finalized": True}

@@ -1,3 +1,4 @@
+// src/contexts/ExportContext.js
 import { createContext, useContext, useState } from "react";
 import exportApi from "../api/exportApi";
 
@@ -13,7 +14,7 @@ export const ExportProvider = ({ children }) => {
       setError(null);
       return await fn(...args);
     } catch (err) {
-      console.error(" Export failed:", err);
+      console.error("❌ Export failed:", err);
       const message =
         err?.message ||
         err?.response?.data?.detail ||
@@ -25,56 +26,62 @@ export const ExportProvider = ({ children }) => {
     }
   };
 
-  // Finalized exports (from DB)
-  const downloadExcel = (id) => handleExport(exportApi.exportToExcel, id);
-  const downloadPdf = (id) => handleExport(exportApi.exportToPdf, id);
-  const exportJson = (id, download = false) =>
-    handleExport(exportApi.exportToJson, id, download);
-  const getPdfBlob = (id) => handleExport(exportApi.getPdfBlob, id);
+  // ---------- Finalized exports (from DB) ----------
+  const downloadExcel = (id, opts = {}) =>
+    handleExport(exportApi.exportToExcel, id, opts);
 
-  //  Try getting finalized scope — returns null if not finalized
-  const getFinalizedScope = async (id) => {
-    try {
-      return await handleExport(exportApi.exportToJson, id);
-    } catch (err) {
-      if (err?.response?.status === 400) return null; 
-      throw err;
-    }
+  const downloadPdf = (id, opts = {}) =>
+    handleExport(exportApi.exportToPdf, id, opts);
+
+  const exportJson = (id, opts = {}) =>
+    handleExport(exportApi.exportToJson, id, opts);
+
+  const getPdfBlob = (id, opts = {}) =>
+    handleExport(exportApi.getPdfBlob, id, opts);
+
+  // ❌ Removed misleading getFinalizedScope here
+  // ✅ Use ProjectContext.getFinalizedScope instead
+
+  // ---------- Previews (draft-only, before finalization) ----------
+  const previewJson = (id, scope, opts = {}) => {
+    if (!scope || Object.keys(scope).length === 0) return {};
+    return handleExport(exportApi.previewJson, id, scope, opts);
   };
 
-  // Preview exports
-
-  const previewJson = async (id, scope) => {
-    const finalScope = await getFinalizedScope(id);
-    const data = finalScope || scope;
-    if (!data || Object.keys(data).length === 0) return {};
-    return handleExport(exportApi.previewJson, id, data);
+  const previewExcel = (id, scope, opts = {}) => {
+    if (!scope || Object.keys(scope).length === 0) return null;
+    return handleExport(exportApi.previewExcel, id, scope, opts);
   };
 
-  const previewExcel = async (id, scope) => {
-    const finalScope = await getFinalizedScope(id);
-    const data = finalScope || scope;
-    if (!data || Object.keys(data).length === 0) return null;
-    return handleExport(exportApi.previewExcel, id, data);
+  const previewPdf = (id, scope, opts = {}) => {
+    if (!scope || Object.keys(scope).length === 0) return null;
+    return handleExport(exportApi.previewPdf, id, scope, opts);
   };
 
-  const previewPdf = async (id, scope) => {
-    const finalScope = await getFinalizedScope(id);
-    const data = finalScope || scope;
-    if (!data || Object.keys(data).length === 0) return null;
-    return handleExport(exportApi.previewPdf, id, data);
+  // ---------- Regenerate scope ----------
+  const regenerateScope = (id, draft, instructions, opts = {}) => {
+    if (!draft || Object.keys(draft).length === 0) return null;
+    return handleExport(exportApi.regenerateScope, id, draft, instructions, opts);
   };
 
   return (
     <ExportContext.Provider
       value={{
+        // finalized exports
         downloadExcel,
         downloadPdf,
         exportJson,
         getPdfBlob,
+
+        // draft previews
         previewJson,
         previewExcel,
         previewPdf,
+
+        // regeneration
+        regenerateScope,
+
+        // context state
         loading,
         error,
       }}

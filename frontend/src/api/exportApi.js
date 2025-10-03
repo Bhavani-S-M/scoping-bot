@@ -1,9 +1,11 @@
 // src/api/exportApi.js
 import api from "./axiosClient";
 
+// ✅ Safe filename helper
 export const safeFileName = (name, ext) =>
   name.replace(/[^a-z0-9_\-]/gi, "_").toLowerCase() + `.${ext}`;
 
+// ✅ Generic GET export with progress + abort support
 const fetchExportBlob = async (url, { signal, onDownloadProgress } = {}) => {
   const res = await api.get(url, {
     responseType: "blob",
@@ -13,6 +15,7 @@ const fetchExportBlob = async (url, { signal, onDownloadProgress } = {}) => {
 
   const contentType = res.headers["content-type"] || "";
   if (contentType.includes("application/json")) {
+    // Handle backend error returned as JSON
     let errorMsg = "Export failed";
     try {
       const text = await new Response(res.data).text();
@@ -27,7 +30,7 @@ const fetchExportBlob = async (url, { signal, onDownloadProgress } = {}) => {
 };
 
 const exportApi = {
-  // ---------- Preview ----------
+  // ---------- Previews (Draft-only, before finalization) ----------
   previewJson: async (projectId, scope, { signal, onDownloadProgress } = {}) => {
     const res = await api.post(
       `/projects/${projectId}/export/preview/json`,
@@ -55,7 +58,7 @@ const exportApi = {
     return res.data;
   },
 
-  // ---------- Finalize ----------
+  // ---------- Finalize Scope ----------
   finalizeScope: async (projectId, scope, { signal } = {}) => {
     const res = await api.post(
       `/projects/${projectId}/finalize_scope`,
@@ -68,7 +71,20 @@ const exportApi = {
     return res.data;
   },
 
-  // ---------- Finalized Exports ----------
+  // ---------- Regenerate Scope ----------
+  regenerateScope: async (projectId, draft, instructions, { signal } = {}) => {
+    const res = await api.post(
+      `/projects/${projectId}/regenerate_scope`,
+      { draft, instructions },
+      {
+        headers: { "Content-Type": "application/json" },
+        signal,
+      }
+    );
+    return res.data;
+  },
+
+  // ---------- Finalized Exports (Downloadables from DB) ----------
   getPdfBlob: async (projectId, { signal, onDownloadProgress } = {}) => {
     return fetchExportBlob(`/projects/${projectId}/export/pdf`, {
       signal,
@@ -97,6 +113,7 @@ const exportApi = {
     });
     return res.data;
   },
+
 };
 
 export default exportApi;
