@@ -1,0 +1,30 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "scopbot-backend.fullname" . }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: {{ include "scopbot-backend.name" . }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ include "scopbot-backend.name" . }}
+  template:
+    metadata:
+      labels:
+        app: {{ include "scopbot-backend.name" . }}
+    spec:
+      containers:
+        - name: backend
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.service.port }}
+          command: {{- toYaml .Values.command | nindent 12 }}
+          args: {{- toYaml .Values.args | nindent 12 }}
+          envFrom:
+            - secretRef:
+                name: {{ .Values.envSecretName }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}

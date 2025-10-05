@@ -7,7 +7,7 @@ import io, mimetypes
 
 get_current_superuser = fastapi_users.current_user(active=True, superuser=True)
 
-router = APIRouter(prefix="/blobs", tags=["Azure Blobs"])
+router = APIRouter(prefix="/api/blobs", tags=["Azure Blobs"])
 
 VALID_BASES = ("projects", "knowledge_base")
 

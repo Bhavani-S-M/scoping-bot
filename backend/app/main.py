@@ -12,7 +12,7 @@ from app.utils import azure_blob
 
 # ---------- App Init ----------
 app = FastAPI(
-    title=config.APP_NAME,
+    title="AI-Powered Project Scoping Bot Backend",
     description="AI-Powered Project Scoping Bot Backend",
     version="1.0.0",
 )
@@ -50,10 +50,3 @@ app.include_router(projects.router)
 app.include_router(exports.router)
 app.include_router(blob.router)
 
-# ---------- Health Check ----------
-@app.get("/")
-def root():
-    return {
-        "message": f"{config.APP_NAME} is running",
-        "environment": config.APP_ENV,
-    }

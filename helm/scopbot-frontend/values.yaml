@@ -1,0 +1,32 @@
+replicaCount: 2
+
+image:
+  repository: omprasadkade/scopbot-frontend
+  tag: v1
+  pullPolicy: Always
+
+service:
+  type: ClusterIP     # Ingress exposes it; no need for LoadBalancer
+  port: 80
+
+backendService:
+  name: scopbot-backend-svc
+  port: 8000
+
+resources:
+  requests:
+    cpu: "100m"
+    memory: "256Mi"
+  limits:
+    cpu: "250m"
+    memory: "512Mi"
+
+namespace: scopbot
+
+# Ingress configuration
+ingress:
+  enabled: true
+  className: nginx
+  host: scopbot.cloudapp.azure.com    # replace with your custom domain
+  tlsEnabled: false                   # set true if using cert-manager
+

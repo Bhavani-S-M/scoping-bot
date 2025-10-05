@@ -98,6 +98,7 @@ class GeneratedScopeResponse(BaseModel):
     overview: Dict[str, Any] = {}
     activities: List[Dict[str, Any]] = []
     resourcing_plan: List[Dict[str, Any]] = []
+    architecture_diagram: Optional[str] = None 
 
 
 # -------------------------

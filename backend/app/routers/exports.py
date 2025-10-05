@@ -14,7 +14,7 @@ from app.utils import export, scope_engine
 
 current_active_user = fastapi_users.current_user(active=True)
 
-router = APIRouter(prefix="/projects/{project_id}/export", tags=["Export"])
+router = APIRouter(prefix="/api/projects/{project_id}/export", tags=["Export"])
 
 
 # Helpers
@@ -42,10 +42,10 @@ def _safe_filename(name: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_-]+", "_", (name or "").strip().lower())
 
 
-async def _ensure_scope(project: models.Project) -> Dict[str, Any]:
+async def _ensure_scope(project: models.Project, db: AsyncSession) -> Dict[str, Any]:
     scope = await _load_finalized_scope(project)
     if not scope:
-        raw_scope = await scope_engine.generate_project_scope(project)
+        raw_scope = await scope_engine.generate_project_scope(db, project)
         scope = export.generate_json_data(raw_scope or {})
     return scope
 
@@ -95,7 +95,7 @@ async def preview_pdf_from_scope(
     project = await _get_project(project_id, current_user.id, db)
     finalized = await _load_finalized_scope(project)
     normalized = export.generate_json_data(scope or {}) if not finalized else finalized
-    file = export.generate_pdf(normalized)
+    file = await export.generate_pdf(normalized)
     safe_name = _safe_filename(normalized.get("overview", {}).get("Project Name") or f"project_{project_id}")
     return StreamingResponse(
         file,
@@ -113,7 +113,7 @@ async def export_project_json(
     current_user: models.User = Depends(current_active_user),
 ):
     project = await _get_project(project_id, current_user.id, db)
-    scope = await _ensure_scope(project)
+    scope = await _ensure_scope(project, db)
     return scope
 
 
@@ -124,7 +124,7 @@ async def export_project_excel(
     current_user: models.User = Depends(current_active_user),
 ):
     project = await _get_project(project_id, current_user.id, db)
-    scope = await _ensure_scope(project)
+    scope = await _ensure_scope(project, db)
     normalized = export.generate_json_data(scope or {})
     file = export.generate_xlsx(normalized)
     safe_name = _safe_filename(project.name or f"project_{project.id}")
@@ -142,9 +142,9 @@ async def export_project_pdf(
     current_user: models.User = Depends(current_active_user),
 ):
     project = await _get_project(project_id, current_user.id, db)
-    scope = await _ensure_scope(project)
+    scope = await _ensure_scope(project, db)
     normalized = export.generate_json_data(scope or {})
-    file = export.generate_pdf(normalized)
+    file = await export.generate_pdf(normalized)
     safe_name = _safe_filename(project.name or f"project_{project.id}")
     return StreamingResponse(
         file,

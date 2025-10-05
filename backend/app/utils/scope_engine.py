@@ -1,5 +1,6 @@
 # app/utils/scope_engine.py
-import json, re, logging, difflib, os, tempfile,anyio,pytesseract, openpyxl,tiktoken, pytz
+import json, re, logging, difflib, os, tempfile,anyio,pytesseract, openpyxl,tiktoken, pytz, graphviz
+
 from calendar import monthrange
 from pdfminer.high_level import extract_text as extract_pdf_text
 from docx import Document
@@ -348,15 +349,17 @@ def _build_scope_prompt(rfp_text: str, kb_chunks: List[str], project=None, model
         "  ],\n"
         '  "resourcing_plan": []\n'
         "}\n\n"
-        f"Rules:\n"
+        f"-Rules:\n"
         f"- The first activity must always start today ({today_str}).\n"
-        "  If an activity has no dependent on another acticity, it should start in parallel with other independent activities.\n"
-        "- Always allow maximum parallel execution to minimize total project duration.\n"
-        "- Project duration must always be **under 12 months** (add more resources if needed).\n"
+        "- **Allow maximum parallel execution**: activities with no dependency must overlap instead of running sequentially."
+        "- Use dependencies only when necessary (e.g., testing depends on development)."
+        "- Project duration must always be **under 12 months**.\n"
         "- Auto-calculate **End Date = Start Date + Effort Months**.\n"
-        "- Auto-calculate **overview.Duration** as the total span in months "
-        "from the earliest Start Date to the latest End Date.\n"
+        "- Auto-calculate **overview.Duration** as the total span in months from the earliest Start Date to the latest End Date.\n"
         "- `Complexity` should be simple, medium, or large.\n"
+        "- **Always assign at least one Resource**."
+        "- Distinguish `Owner` (responsible lead role) and `Resources` (supporting roles)."
+        "- `Owner` and `Resources` must be valid IT roles (e.g., Backend Developer, AI Engineer, QA Engineer, etc.)."
         "- `Owner` is always a role who manages that particular activity (not a personal name).\n"
         "- `Resources` must contain only roles which are required for that particular activity, distinct from `Owner`.\n"
         "- If `Resources` is missing, fallback to the same `Owner` role.\n"
@@ -364,6 +367,8 @@ def _build_scope_prompt(rfp_text: str, kb_chunks: List[str], project=None, model
         "- Effort Months should be small integers 0.5 to 2 months not more than this.\n"
         "- IDs must start from 1 and increment sequentially.\n"
         "- Use USD for all rates.\n"
+        "- If the RFP or KB text lacks detail, infer the missing pieces logically."
+        "- Include all relevant roles and activities that ensure delivery of the project scope."
         "- Keep all field names exactly as in the schema.\n"
 
         f"{user_context}"
@@ -392,6 +397,221 @@ def _to_float(val: Any, default: float = 0.0) -> float:
         return float(val)
     except Exception:
         return default
+    
+def _build_architecture_prompt(rfp_text: str, kb_chunks: List[str], project=None) -> str:
+    name = (getattr(project, "name", "") or "Untitled Project").strip()
+    domain = (getattr(project, "domain", "") or "General").strip()
+    tech = (getattr(project, "tech_stack", "") or "Modern Web + Cloud Stack").strip()
+
+    return f"""
+You are a senior enterprise cloud architect.
+Design a **modern, color-coded, horizontally aligned system architecture diagram** 
+based on the following project context.
+
+Project Name: {name}
+Domain: {domain}
+Tech Stack: {tech}
+
+RFP Text:
+{rfp_text}
+
+Knowledge Base Context:
+{kb_chunks}
+
+### Guidelines
+- Output **ONLY valid Graphviz DOT syntax** (no markdown or commentary).
+- Start with `digraph Architecture {{` and end with `}}`.
+- Use `rankdir=LR` for left-to-right layout.
+- Structure the architecture into clearly labeled clusters:
+  1. **Frontend / Touchpoints** → color: `#E0F2FE`
+  2. **Backend / Internal Services** → color: `#F3F4F6`
+  3. **Data / Storage / APIs** → color: `#E0F7F5`
+  4. **AI / Analytics Layer** → color: `#EDE9FE`
+- Include meaningful labels (e.g. "React Frontend", "FastAPI Backend", "Azure Blob", "Azure OpenAI").
+- Use up to 15 nodes maximum.
+- Maintain clear, logical flow (e.g., Frontend → Backend → Data → AI → Outputs).
+- Prefer **orthogonal arrows (`splines=ortho`)** for clean connections.
+
+### Shapes
+- box       = Frontend/UI component
+- box3d     = Backend/API service
+- cylinder  = Databases or Storage
+- hexagon   = APIs, Data Pipelines
+- ellipse   = AI / Analytics / Integrations
+- diamond   = Gateways or Control Nodes
+
+### Example
+digraph Architecture {{
+  rankdir=LR;
+  node [fontname="Helvetica"];
+
+  subgraph cluster_frontend {{
+    label="Frontend / Touchpoints";
+    style="filled,rounded";
+    fillcolor="#E0F2FE";
+    web [label="Web App", shape=box];
+    mobile [label="Mobile App", shape=box];
+  }}
+
+  subgraph cluster_backend {{
+    label="Backend / Services";
+    style="filled,rounded";
+    fillcolor="#F3F4F6";
+    api [label="FastAPI Service", shape=box3d];
+    auth [label="Auth Service", shape=box3d];
+  }}
+
+  subgraph cluster_data {{
+    label="Data & Storage";
+    style="filled,rounded";
+    fillcolor="#E0F7F5";
+    blob [label="Azure Blob Storage", shape=cylinder];
+    search [label="Azure AI Search", shape=hexagon];
+  }}
+
+  subgraph cluster_ai {{
+    label="AI / Analytics";
+    style="filled,rounded";
+    fillcolor="#EDE9FE";
+    ai [label="Azure OpenAI", shape=ellipse];
+    reports [label="Power BI / Analytics", shape=ellipse];
+  }}
+
+  web -> api -> blob -> search -> ai -> reports;
+  mobile -> api;
+}}
+"""
+
+
+async def generate_architecture(
+    db: AsyncSession,
+    project,
+    rfp_text: str,
+    kb_chunks: List[str],
+    blob_base_path: str,
+) -> tuple[models.ProjectFile | None, str]:
+    """
+    Generate a visually clean, high-quality architecture diagram (PNG)
+    from RFP + KB context, upload to Azure Blob Storage,
+    save record in ProjectFile, and return (db_file, blob_path).
+    Each project's diagram is unique based on its RFP/domain context.
+    """
+    if client is None or deployment is None:
+        logger.warning("Azure OpenAI not configured — skipping architecture generation")
+        return None, ""
+
+    prompt = _build_architecture_prompt(rfp_text, kb_chunks, project)
+
+    try:
+        # --- Step 1: Ask Azure OpenAI for Graphviz DOT code ---
+        resp = await anyio.to_thread.run_sync(
+            lambda: client.chat.completions.create(
+                model=deployment,
+                messages=[
+                    {"role": "system", "content": "You are an expert cloud software architect."},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.3,
+            )
+        )
+        dot_code = resp.choices[0].message.content.strip()
+
+        # --- Step 2: Clean and validate DOT code ---
+        dot_code = re.sub(r"```[a-zA-Z]*", "", dot_code).replace("```", "").strip()
+        dot_code = dot_code.strip("`").strip()
+
+        if not dot_code.lower().startswith("digraph"):
+            dot_code = f"digraph Architecture {{\n{dot_code}\n}}"
+
+        # --- Step 3: Inject clean styling preamble (with embedded DPI + font) ---
+        style_preamble = """
+digraph Architecture {
+    graph [dpi=200, fontname="Helvetica", fontsize=12];
+    rankdir=LR;
+    splines=ortho;
+    nodesep=1.3;
+    ranksep=1.2;
+    pad=0.6;
+    bgcolor="white";
+
+    node [
+        style="rounded,filled",
+        fontname="Helvetica-Bold",
+        fontsize=13,
+        fillcolor="#F9FAFB",
+        color="#9CA3AF",
+        margin=0.2,
+        penwidth=1.3
+    ];
+
+    edge [
+        color="#4B5563",
+        arrowsize=0.9,
+        penwidth=1.3,
+        fontname="Helvetica",
+        fontsize=11,
+        fontcolor="#111827"
+    ];
+"""
+        dot_inner = re.sub(r"(?is)^digraph\s+\w+\s*\{|\}$", "", dot_code.strip()).strip()
+        dot_code = style_preamble + dot_inner + "\n}"
+
+        # --- Step 4: Render DOT → High-resolution PNG ---
+        try:
+            graph = graphviz.Source(dot_code, engine="dot")  # neat layout engine
+            tmp_png = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+
+            # Just render — Graphviz uses internal anti-aliasing when dpi=200 is set above
+            graph.render(tmp_png.name, format="png", cleanup=True)
+
+            png_path = tmp_png.name + ".png"
+        except Exception as e:
+            logger.error(f"Graphviz rendering failed: {e}\n--- DOT Snippet ---\n{dot_code[:600]}")
+            return None, ""
+
+        # --- Step 5: Upload PNG to Azure Blob ---
+        blob_name = f"{blob_base_path}/architecture_{project.id}.png"
+        with open(png_path, "rb") as fh:
+            png_bytes = fh.read()
+        await azure_blob.upload_bytes(png_bytes, blob_name)
+
+        try:
+            os.remove(png_path)
+        except FileNotFoundError:
+            pass
+
+        # --- Step 6: Replace old record if exists ---
+        result = await db.execute(
+            select(models.ProjectFile).filter(
+                models.ProjectFile.project_id == project.id,
+                models.ProjectFile.file_name == "architecture.png",
+            )
+        )
+        old_file = result.scalars().first()
+        if old_file:
+            try:
+                await azure_blob.delete_blob(old_file.file_path)
+                await db.delete(old_file)
+                await db.commit()
+            except Exception as e:
+                logger.warning(f"Failed to delete old architecture.png: {e}")
+
+        # --- Step 7: Save new ProjectFile record ---
+        db_file = models.ProjectFile(
+            project_id=project.id,
+            file_name="architecture.png",
+            file_path=blob_name,
+        )
+        db.add(db_file)
+        await db.commit()
+        await db.refresh(db_file)
+
+        logger.info(f"Clean architecture diagram generated and stored at {blob_name}")
+        return db_file, blob_name
+
+    except Exception as e:
+        logger.error(f"Architecture generation failed: {e}")
+        return None, ""
 
 
 # --- Cleaner ---
@@ -527,7 +747,10 @@ def clean_scope(data: Dict[str, Any], project=None) -> Dict[str, Any]:
     return data
 
 
-async def generate_project_scope(project) -> dict:
+async def generate_project_scope(db: AsyncSession, project) -> dict:
+    """
+    Generate project scope + architecture diagram + store architecture in DB + return combined JSON.
+    """
     if client is None or deployment is None:
         logger.warning("Azure OpenAI not configured")
         return {}
@@ -544,19 +767,16 @@ async def generate_project_scope(project) -> dict:
         files: List[dict] = []
         if getattr(project, "files", None):
             try:
-                # convert ORM objects → plain dicts
                 files = [{"file_name": f.file_name, "file_path": f.file_path} for f in project.files]
             except Exception as e:
                 logger.warning(f" Could not access project.files: {e}")
                 files = []
-
         if files:
             rfp_text = await _extract_text_from_files(files)
-
     except Exception as e:
         logger.warning(f"File extraction for project {getattr(project, 'id', None)}")
 
-    # Trim RFP text
+    # ---------- Trim RFP text ----------
     rfp_tokens = tokenizer.encode(rfp_text or "")
     if len(rfp_tokens) > 3000:
         rfp_tokens = rfp_tokens[:3000]
@@ -573,10 +793,9 @@ async def generate_project_scope(project) -> dict:
         getattr(project, "compliance", None),
         str(getattr(project, "duration", "")) if getattr(project, "duration", None) else None,
     ]
-
     fallback_text = " ".join(f for f in fallback_fields if f and str(f).strip())
 
-    if not (rfp_text and rfp_text.strip()) and not (fallback_text and fallback_text.strip()):
+    if not (rfp_text.strip() or fallback_text.strip()):
         return {
             "overview": {
                 "Project Name": "Untitled Project",
@@ -585,14 +804,14 @@ async def generate_project_scope(project) -> dict:
                 "Tech Stack": "TBD",
                 "Use Cases": "TBD",
                 "Compliance": "TBD",
-                "Duration": 1
+                "Duration": 1,
             },
             "activities": [],
-            "resourcing_plan": []
+            "resourcing_plan": [],
+            "architecture_diagram": None,
         }
 
     kb_results = _rag_retrieve(rfp_text or fallback_text)
-
     kb_chunks = []
     stop = False
     for group in kb_results:
@@ -607,15 +826,14 @@ async def generate_project_scope(project) -> dict:
             break
 
     logger.info(
-        f"Final RFP tokens: {len(rfp_tokens)}, "
-        f"KB tokens: {used_tokens - len(rfp_tokens)}, "
-        f"Total: {used_tokens} / {max_total_tokens}"
+        f"Final RFP tokens: {len(rfp_tokens)}, KB tokens: {used_tokens - len(rfp_tokens)}, Total: {used_tokens}/{max_total_tokens}"
     )
 
     # ---------- Build + query ----------
     prompt = _build_scope_prompt(rfp_text, kb_chunks, project, model_name=model_name)
 
     try:
+        # Step 1: Generate scope
         resp = await anyio.to_thread.run_sync(
             lambda: client.chat.completions.create(
                 model=deployment,
@@ -624,11 +842,25 @@ async def generate_project_scope(project) -> dict:
             )
         )
         raw = _extract_json(resp.choices[0].message.content.strip())
-        return clean_scope(raw, project=project)
+        cleaned_scope = clean_scope(raw, project=project)
+
+        # Step 2: Generate + store architecture diagram
+        try:
+            blob_base_path = f"{PROJECTS_BASE}/{getattr(project, 'id', 'unknown')}"
+            db_file, arch_blob = await generate_architecture(
+                db, project, rfp_text, kb_chunks, blob_base_path
+            )
+            cleaned_scope["architecture_diagram"] = arch_blob or None
+        except Exception as e:
+            logger.warning(f"Architecture diagram generation failed: {e}")
+            cleaned_scope["architecture_diagram"] = None
+
+        return cleaned_scope
+
     except Exception as e:
         logger.error(f"Azure OpenAI scope generation failed: {e}")
         return {}
-    
+
 
 
 async def regenerate_from_instructions(draft: dict, instructions: str) -> dict:

@@ -6,15 +6,10 @@ load_dotenv()
 # Project root (1 level above /app)
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# Application Config
-APP_NAME = os.getenv("APP_NAME")
-APP_ENV = os.getenv("APP_ENV")
-APP_PORT = int(os.getenv("APP_PORT"))
-
 # Database (sync + async)
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-FRONTEND_URL = "http://localhost:5173"
+FRONTEND_URL = os.getenv("FRONTEND_URL")
 
 # Auth / JWT
 SECRET_KEY = os.getenv("SECRET_KEY")

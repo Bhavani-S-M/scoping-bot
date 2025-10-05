@@ -52,9 +52,6 @@ export default function Exports() {
   const { previewPdf, getPdfBlob, regenerateScope } = useExport();
   const [finalizing, setFinalizing] = useState(false);
 
-
-
-
   const incomingDraft = location.state?.draftScope || null;
 
   const [jsonText, setJsonText] = useState("");
@@ -75,6 +72,8 @@ export default function Exports() {
   const [activeTab, setActiveTab] = useState("json");
   const [loading, setLoading] = useState(false);
   const [isFinalized, setIsFinalized] = useState(false);
+  const [justFinalized, setJustFinalized] = useState(false);
+
   const [showSuccessBanner, setShowSuccessBanner] = useState(false);
 
   const [excelSection, setExcelSection] = useState("");
@@ -179,6 +178,7 @@ export default function Exports() {
     }));
 
   // Load project
+  // ✅ Load project with guard to prevent auto-refresh right after finalization
   useEffect(() => {
     (async () => {
       try {
@@ -186,7 +186,9 @@ export default function Exports() {
         const res = await projectApi.getProject(id);
         setProject(res.data);
 
-        // ✅ Only mark finalized if real finalized data exists
+        // Prevent overwriting immediately after finalize
+        if (isFinalized && justFinalized) return;
+
         const finalizedData = await getFinalizedScope(id);
 
         if (finalizedData) {
@@ -205,8 +207,8 @@ export default function Exports() {
         setLoading(false);
       }
     })();
-  }, [id, incomingDraft]);
-
+    // 👇 Important dependency: this prevents overwrite immediately after finalize
+  }, [id, incomingDraft, justFinalized]);
 
   // 🧹 Clear cached PDF on JSON change
   useEffect(() => {
@@ -217,12 +219,17 @@ export default function Exports() {
 
   const prevJsonRef = useRef("");
   useEffect(() => {
-    // only reset if finalized AND json actually changed by user
-    if (isFinalized && prevJsonRef.current && prevJsonRef.current !== jsonText) {
+    // Skip reset right after finalization to prevent false un-finalizing
+    if (isFinalized && prevJsonRef.current && prevJsonRef.current !== jsonText && !justFinalized) {
       setIsFinalized(false);
     }
+
     prevJsonRef.current = jsonText;
-  }, [jsonText, isFinalized]);
+
+    // clear the flag once effect runs after finalize
+    if (justFinalized) setJustFinalized(false);
+  }, [jsonText, isFinalized, justFinalized]);
+
 
 
 
@@ -314,7 +321,7 @@ export default function Exports() {
           });
 
           const totalRow = headers.map((h, idx) => {
-            if (idx === headers.length - 2) return totalEfforts;
+            if (idx === headers.length - 2) return Number(totalEfforts.toFixed(2));
             if (idx === headers.length - 1) return formatCurrency(totalCost);
             return idx === 0 ? "Total" : "";
           });
@@ -336,11 +343,12 @@ export default function Exports() {
       setFinalizing(true);
       await finalizeScope(id, parsedDraft);
       toast.success("Scope finalized successfully!");
+
+      setJustFinalized(true);   // 👈 add this line
       setIsFinalized(true);
       setShowSuccessBanner(true);
 
       const finalizedData = await getFinalizedScope(id);
-
       if (finalizedData) setJsonText(JSON.stringify(finalizedData, null, 2));
 
       setPreviewPdfUrl(null);
@@ -352,6 +360,7 @@ export default function Exports() {
       setTimeout(() => setShowSuccessBanner(false), 5000);
     }
   };
+
 
   // ---------- Unified Download Handler ----------
   const downloadFile = async (key, fetchFn, defaultName, ext) => {

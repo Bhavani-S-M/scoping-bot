@@ -17,12 +17,10 @@ get_current_active_user = fastapi_users.current_user(active=True)
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/projects", tags=["Projects"])
+router = APIRouter(prefix="/api/projects", tags=["Projects"])
 
 
-# -------------------------
 # List Projects
-# -------------------------
 @router.get("", response_model=List[schemas.Project])
 async def list_projects(
     db: AsyncSession = Depends(get_async_session),
@@ -36,9 +34,7 @@ async def list_projects(
     return items
 
 
-# -------------------------
 # Create Project
-# -------------------------
 @router.post("", response_model=schemas.Project, status_code=status.HTTP_201_CREATED)
 async def create_project(
     name: Optional[str] = Form(None),
@@ -72,9 +68,7 @@ async def create_project(
     return db_project
 
 
-# -------------------------
 # Get Project Details
-# -------------------------
 @router.get("/{project_id}", response_model=schemas.Project)
 async def get_project(
     project_id: uuid.UUID,
@@ -89,9 +83,7 @@ async def get_project(
     return project
 
 
-# -------------------------
 # Update Project
-# -------------------------
 @router.put("/{project_id}", response_model=schemas.Project)
 async def update_project(
     project_id: uuid.UUID,
@@ -106,9 +98,7 @@ async def update_project(
     return await projects.update_project(db, db_project, project_update)
 
 
-# -------------------------
 # Delete Project
-# -------------------------
 @router.delete("/{project_id}", response_model=schemas.MessageResponse)
 async def delete_project(
     project_id: uuid.UUID,
@@ -123,9 +113,7 @@ async def delete_project(
     return {"msg": "Project deleted successfully"}
 
 
-# -------------------------
 # Delete All Projects
-# -------------------------
 @router.delete("", response_model=schemas.MessageResponse)
 async def delete_all_projects(
     db: AsyncSession = Depends(get_async_session),
@@ -135,30 +123,31 @@ async def delete_all_projects(
     return {"msg": f"Deleted {count} projects successfully"}
 
 
-# -------------------------
 # Generate Scope
-# -------------------------
 @router.get("/{project_id}/generate_scope", response_model=schemas.GeneratedScopeResponse)
-async def generate_project_scope(
+async def generate_project_scope_route(
     project_id: uuid.UUID,
     db: AsyncSession = Depends(get_async_session),
     current_user: models.User = Depends(get_current_active_user),
 ):
+    # Fetch the project
     db_project = await projects.get_project(db, project_id=project_id, owner_id=current_user.id)
     if not db_project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    scope = await scope_engine.generate_project_scope(db_project) or {}
+    # Generate full scope (includes architecture)
+    scope = await scope_engine.generate_project_scope(db, db_project) or {}
+
     return schemas.GeneratedScopeResponse(
         overview=scope.get("overview", {}),
         activities=scope.get("activities", []),
-        resourcing_plan=scope.get("resourcing_plan", [])
+        resourcing_plan=scope.get("resourcing_plan", []),
+        architecture_diagram=scope.get("architecture_diagram")
     )
 
 
-# -------------------------
+
 # Finalize Scope
-# -------------------------
 @router.post("/{project_id}/finalize_scope", response_model=schemas.MessageResponse)
 async def finalize_project_scope(
     project_id: uuid.UUID,

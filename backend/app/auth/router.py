@@ -31,7 +31,7 @@ fastapi_users = FastAPIUsers[User, uuid.UUID](
 )
 
 # Routers
-router = APIRouter()
+router = APIRouter(prefix="/api")
 
 #  Require email verification before login
 router.include_router(

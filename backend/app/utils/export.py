@@ -3,8 +3,9 @@ from __future__ import annotations
 import io, json
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict
-
+from reportlab.platypus import Image as RLImage
 import xlsxwriter
+from app.utils import azure_blob
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.units import cm
 from reportlab.lib import colors
@@ -40,19 +41,9 @@ ROLE_RATE_MAP: Dict[str, float] = {
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
-
-# Helpers
-def _to_float(v, d=0.0):
-    try: return float(str(v).replace(",","").strip())
-    except: return d
-
-
 # JSON Export
 def generate_json_data(scope: Dict[str, Any]) -> Dict[str, Any]:
     return scope
-
-
-# Excel Export
 
 # Excel Export
 def generate_xlsx(scope: Dict[str, Any]) -> io.BytesIO:
@@ -285,12 +276,12 @@ def generate_xlsx(scope: Dict[str, Any]) -> io.BytesIO:
         out.seek(0)
         return out
 # PDF EXPORT
-def generate_pdf(scope: Dict[str, Any]) -> io.BytesIO:
+async def generate_pdf(scope: Dict[str, Any]) -> io.BytesIO:
     data = scope or {}
     buf = io.BytesIO()
     W, H = landscape(A4)
     doc = SimpleDocTemplate(
-        buf, pagesize=(W * 1.5, H * 2.5),
+        buf, pagesize=(W * 1.1, H * 2),
         leftMargin=1 * cm, rightMargin=1 * cm,
         topMargin=1 * cm, bottomMargin=1 * cm
     )
@@ -309,11 +300,50 @@ def generate_pdf(scope: Dict[str, Any]) -> io.BytesIO:
     project_name = data.get("overview", {}).get("Project Name", "Untitled Project")
     elems.append(Paragraph(project_name, title_style))
 
+    # -------- Architecture Diagram --------
+    arch_path = data.get("architecture_diagram")
+    if arch_path:
+        try:
+            # Download image bytes from blob
+            img_bytes = await azure_blob.download_bytes(arch_path)
+            img_buf = io.BytesIO(img_bytes)
+
+            # Section header
+            elems.append(Paragraph("<b>System Architecture</b>", styles["Heading2"]))
+
+            # ---- Improved image rendering ----
+            img = RLImage(img_buf)
+
+            # Dynamically scale image width
+            max_width = 780  # fits within your current A4 landscape scaling
+            aspect = img.imageHeight / float(img.imageWidth)
+            new_height = max_width * aspect
+
+            img.drawWidth = max_width
+            img.drawHeight = new_height
+
+            # Left align cleanly using Table (ReportLab trick)
+            img_table = Table([[img]], colWidths=[max_width], hAlign="LEFT")
+            img_table.setStyle(TableStyle([
+                ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+            ]))
+
+            elems.append(img_table)
+            elems.append(Spacer(1, 0.6 * cm))
+
+        except Exception as e:
+            print(f"⚠️ Failed to embed architecture diagram: {e}")
+
     # -------- Overview --------
     ov = data.get("overview", {})
     if ov:
         ov_rows = [["Field", "Value"]] + [[k, str(v)] for k, v in ov.items()]
-        tbl = Table(ov_rows, colWidths=[110, 800], repeatRows=1)
+        tbl = Table(ov_rows, colWidths=[110, 700], repeatRows=1)
         ts_ov = TableStyle([
             ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(THEME["header_bg"])),
@@ -329,7 +359,7 @@ def generate_pdf(scope: Dict[str, Any]) -> io.BytesIO:
         tbl.hAlign = "LEFT"
         elems.append(Paragraph("<b>Project Overview</b>", styles["Heading2"]))
         elems.append(tbl)
-        elems.append(Spacer(1, 0.4 * cm))
+        elems.append(Spacer(1, 0.6 * cm))
 
     # -------- Activities --------
     activities = data.get("activities", [])
@@ -359,7 +389,7 @@ def generate_pdf(scope: Dict[str, Any]) -> io.BytesIO:
             ])
 
         t = Table(rows, repeatRows=1,
-                  colWidths=[25, 150, 200, 100, 120, 70, 70, 95])
+                  colWidths=[25, 150, 200, 100, 120, 70, 70, 90])
         ts = TableStyle([
             ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(THEME["header_bg"])),
@@ -372,7 +402,7 @@ def generate_pdf(scope: Dict[str, Any]) -> io.BytesIO:
         t.hAlign = "LEFT"
         elems.append(Paragraph("<b>Activities Breakdown</b>", styles["Heading2"]))
         elems.append(t)
-        elems.append(Spacer(1, 0.4 * cm))
+        elems.append(Spacer(1, 0.6 * cm))
 
         # ----- Gantt chart -----
         if parsed:
@@ -404,7 +434,7 @@ def generate_pdf(scope: Dict[str, Any]) -> io.BytesIO:
                     d.add(String(x+w+4, y+2, label, fontSize=6))
                 elems.append(Paragraph("<b>Project Timeline</b>", styles["Heading2"]))
                 elems.append(d)
-                elems.append(Spacer(1, 0.3 * cm))
+                elems.append(Spacer(1, 0.6 * cm))
                 if bi < len(batches):
                     elems.append(PageBreak())
 
@@ -491,7 +521,7 @@ def generate_pdf(scope: Dict[str, Any]) -> io.BytesIO:
 
             elems.append(Paragraph("<b>Resourcing Plan</b>", styles["Heading2"]))
             elems.append(t2)
-            elems.append(Spacer(1, 0.4*cm))
+            elems.append(Spacer(1, 0.6*cm))
 
         # Pie chart
         if pie_labels:
