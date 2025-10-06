@@ -1,0 +1,19 @@
+apiVersion : apps/v1
+kind: Deployment
+metadata:
+  name: omprasadkadeprojectscopingbot 
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: omprasadkadeprojectscopingbot
+  template:
+    metadata:
+      labels:
+        app: omprasadkadeprojectscopingbot 
+    spec:
+      containers:
+        - name: omprasadkadeprojectscopingbot 
+          image: scopotacr.azurecr.io/omprasadkadeprojectscopingbot
+          ports:
+          - containerPort: 8000
