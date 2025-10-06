@@ -5,18 +5,32 @@ metadata:
   name: scopbot-ingress
   namespace: {{ .Values.namespace }}
   annotations:
-    kubernetes.io/ingress.class: {{ .Values.ingress.className }}
+    nginx.ingress.kubernetes.io/proxy-body-size: "500m"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "*"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, PUT, DELETE, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "Authorization, Content-Type, Accept"
+    nginx.ingress.kubernetes.io/cors-expose-headers: "Content-Disposition"
+{{- with .Values.ingress.annotations }}
+{{ toYaml . | indent 4 }}
+{{- end }}
 spec:
+  ingressClassName: {{ .Values.ingress.className }}
+
   {{- if .Values.ingress.tlsEnabled }}
   tls:
     - hosts:
         - {{ .Values.ingress.host }}
       secretName: scopbot-tls
   {{- end }}
+
   rules:
     - host: {{ .Values.ingress.host }}
       http:
         paths:
+          # Frontend (React)
           - path: /
             pathType: Prefix
             backend:
@@ -24,7 +38,9 @@ spec:
                 name: {{ include "scopbot-frontend.fullname" . }}-svc
                 port:
                   number: 80
-          - path: /api
+
+          # Backend (FastAPI)
+          - path: /api/
             pathType: Prefix
             backend:
               service:
