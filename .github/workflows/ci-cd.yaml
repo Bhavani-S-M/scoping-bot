@@ -107,7 +107,7 @@ jobs:
       # Deploy Backend via Helm
       - name: Deploy backend via Helm
         run: |
-          helm upgrade --install backend $HELM_DIR/backend-chart \
+          helm upgrade --install backend $HELM_DIR/scopbot-backend \
             --namespace $NAMESPACE \
             --set image.repository=$BACKEND_IMAGE \
             --set image.tag=${{ github.sha }} \
@@ -119,7 +119,7 @@ jobs:
       # ----------------------
       - name: Deploy frontend via Helm
         run: |
-          helm upgrade --install frontend $HELM_DIR/frontend-chart \
+          helm upgrade --install frontend $HELM_DIR/scopbot-frontend \
             --namespace $NAMESPACE \
             --set image.repository=$FRONTEND_IMAGE \
             --set image.tag=${{ github.sha }} \
