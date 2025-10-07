@@ -28,5 +28,5 @@ ingress:
   enabled: true
   className: nginx
   host: scopbot.cloudapp.azure.com    # replace with your custom domain
-  tlsEnabled: false                   # set true if using cert-manager
+  tlsEnabled: true                   # set true if using cert-manager
 
