@@ -104,7 +104,6 @@ jobs:
 
       # ----------------------
       # Deploy Backend via Helm
-      # ----------------------
       - name: Deploy backend via Helm
         run: |
           helm upgrade --install backend $HELM_DIR/backend-chart \
