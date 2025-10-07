@@ -6,7 +6,7 @@ image:
   pullPolicy: Always
 
 service:
-  type: ClusterIP     # Ingress exposes it; no need for LoadBalancer
+  type: ClusterIP
   port: 80
 
 backendService:
@@ -23,10 +23,14 @@ resources:
 
 namespace: scopbot
 
-# Ingress configuration
 ingress:
   enabled: true
   className: nginx
-  host: scopbot.cloudapp.azure.com    # replace with your custom domain
-  tlsEnabled: true                   # set true if using cert-manager
-
+  host: scopbot.cloudapp.azure.com
+  tlsEnabled: true
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+  tls:
+    - hosts:
+        - scopbot.cloudapp.azure.com
+      secretName: scopbot-tls
