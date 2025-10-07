@@ -405,8 +405,8 @@ def _build_architecture_prompt(rfp_text: str, kb_chunks: List[str], project=None
 
     return f"""
 You are a senior enterprise cloud architect.
-Design a **modern, color-coded, horizontally aligned system architecture diagram** 
-based on the following project context.
+Design a **modern, minimal, color-coded, horizontally aligned system architecture diagram**
+with elegant UI styling and balanced spacing, based on the following project context.
 
 Project Name: {name}
 Domain: {domain}
@@ -418,69 +418,103 @@ RFP Text:
 Knowledge Base Context:
 {kb_chunks}
 
-### Guidelines
-- Output **ONLY valid Graphviz DOT syntax** (no markdown or commentary).
-- Start with `digraph Architecture {{` and end with `}}`.
-- Use `rankdir=LR` for left-to-right layout.
-- Structure the architecture into clearly labeled clusters:
-  1. **Frontend / Touchpoints** → color: `#E0F2FE`
-  2. **Backend / Internal Services** → color: `#F3F4F6`
-  3. **Data / Storage / APIs** → color: `#E0F7F5`
-  4. **AI / Analytics Layer** → color: `#EDE9FE`
-- Include meaningful labels (e.g. "React Frontend", "FastAPI Backend", "Azure Blob", "Azure OpenAI").
-- Use up to 15 nodes maximum.
-- Maintain clear, logical flow (e.g., Frontend → Backend → Data → AI → Outputs).
-- Prefer **orthogonal arrows (`splines=ortho`)** for clean connections.
+### Design Goals
+- Output **ONLY valid Graphviz DOT syntax** (no markdown or commentary)
+- Start with `digraph Architecture {{` and end with `}}`
+- **Horizontal flow (Left → Right)** using `rankdir=LR`
+- Use a **clean, modern visual theme** with subtle gradients and soft colors
+- Organize into the following **clusters (sections)**:
+  1. **Frontend / User Touchpoints** → color: `#E3F2FD` (blue tint)
+  2. **Backend / Services** → color: `#E8F5E9` (green tint)
+  3. **Data / Storage / APIs** → color: `#FFFDE7` (yellow tint)
+  4. **AI / Analytics Layer** → color: `#F3E5F5` (purple tint)
+  5. **Security / Monitoring** → color: `#ECEFF1` (gray tint)
+- Include meaningful node labels (e.g. “React Frontend”, “FastAPI Backend”, “Azure Blob Storage”, “Azure OpenAI”)
+- Keep under **15 nodes total**
+- Maintain smooth, **logical arrow flow (Frontend → Backend → Data → AI → Outputs)**
+- Use **orthogonal connectors (`splines=ortho`)** and avoid overlapping lines
+- Make it look visually balanced and presentation-grade
 
-### Shapes
-- box       = Frontend/UI component
-- box3d     = Backend/API service
-- cylinder  = Databases or Storage
-- hexagon   = APIs, Data Pipelines
-- ellipse   = AI / Analytics / Integrations
-- diamond   = Gateways or Control Nodes
+### Styling Rules
+- **Overall graph:**
+  - `dpi=200`, `ranksep=1.3`, `nodesep=1.3`
+  - `bgcolor="white"`
+- **Clusters:**
+  - `style="filled,rounded"`
+  - `fontname="Helvetica-Bold"`
+  - `fontsize=13`
+  - Rounded corners and soft color fills (no dark outlines)
+- **Nodes:**
+  - `fontname="Helvetica"`
+  - `fontsize=12`
+  - Rounded shapes with pastel backgrounds
+  - Distinct shapes per layer:
+    - `box` → UI/Frontend
+    - `box3d` → Backend/API services
+    - `cylinder` → Databases or Storage
+    - `hexagon` → APIs / Pipelines
+    - `ellipse` → AI / Analytics
+    - `diamond` → Security / Control Gateways
+- **Edges:**
+  - `color="#607D8B"`, `penwidth=1.5`, `arrowsize=0.9`
+  - Smooth orthogonal flow with minimum crossings
 
-### Example
+### Example Layout
 digraph Architecture {{
   rankdir=LR;
-  node [fontname="Helvetica"];
+  graph [dpi=200, fontname="Helvetica", bgcolor="white", nodesep=1.2, ranksep=1.2, splines=ortho];
+
+  node [style="rounded,filled", color="#B0BEC5", fontname="Helvetica", fontsize=12, penwidth=1.2];
 
   subgraph cluster_frontend {{
     label="Frontend / Touchpoints";
     style="filled,rounded";
-    fillcolor="#E0F2FE";
-    web [label="Web App", shape=box];
-    mobile [label="Mobile App", shape=box];
+    fillcolor="#E3F2FD";
+    web [label="React Web App", shape=box, fillcolor="#BBDEFB"];
+    mobile [label="Mobile App", shape=box, fillcolor="#BBDEFB"];
   }}
 
   subgraph cluster_backend {{
-    label="Backend / Services";
+    label="Backend / Internal Services";
     style="filled,rounded";
-    fillcolor="#F3F4F6";
-    api [label="FastAPI Service", shape=box3d];
-    auth [label="Auth Service", shape=box3d];
+    fillcolor="#E8F5E9";
+    api [label="FastAPI Service", shape=box3d, fillcolor="#C8E6C9"];
+    auth [label="Auth / User Service", shape=box3d, fillcolor="#C8E6C9"];
   }}
 
   subgraph cluster_data {{
-    label="Data & Storage";
+    label="Data / Storage / APIs";
     style="filled,rounded";
-    fillcolor="#E0F7F5";
-    blob [label="Azure Blob Storage", shape=cylinder];
-    search [label="Azure AI Search", shape=hexagon];
+    fillcolor="#FFFDE7";
+    blob [label="Azure Blob Storage", shape=cylinder, fillcolor="#FFF9C4"];
+    db [label="PostgreSQL DB", shape=cylinder, fillcolor="#FFF9C4"];
+    search [label="Azure AI Search", shape=hexagon, fillcolor="#FFF9C4"];
   }}
 
   subgraph cluster_ai {{
-    label="AI / Analytics";
+    label="AI / Analytics Layer";
     style="filled,rounded";
-    fillcolor="#EDE9FE";
-    ai [label="Azure OpenAI", shape=ellipse];
-    reports [label="Power BI / Analytics", shape=ellipse];
+    fillcolor="#F3E5F5";
+    openai [label="Azure OpenAI", shape=ellipse, fillcolor="#E1BEE7"];
+    reports [label="Power BI / Analytics Dashboard", shape=ellipse, fillcolor="#E1BEE7"];
   }}
 
-  web -> api -> blob -> search -> ai -> reports;
+  subgraph cluster_security {{
+    label="Security / Monitoring";
+    style="filled,rounded";
+    fillcolor="#ECEFF1";
+    monitor [label="Azure Monitor / Grafana", shape=diamond, fillcolor="#CFD8DC"];
+    keyvault [label="Azure Key Vault", shape=diamond, fillcolor="#CFD8DC"];
+  }}
+
+  # Flow Connections
+  web -> api -> db -> search -> openai -> reports;
   mobile -> api;
+  api -> monitor;
+  search -> keyvault;
 }}
 """
+
 
 
 async def generate_architecture(
@@ -511,7 +545,7 @@ async def generate_architecture(
                     {"role": "system", "content": "You are an expert cloud software architect."},
                     {"role": "user", "content": prompt},
                 ],
-                temperature=0.3,
+                temperature=0.7,
             )
         )
         dot_code = resp.choices[0].message.content.strip()
@@ -526,33 +560,38 @@ async def generate_architecture(
         # --- Step 3: Inject clean styling preamble (with embedded DPI + font) ---
         style_preamble = """
 digraph Architecture {
-    graph [dpi=200, fontname="Helvetica", fontsize=12];
-    rankdir=LR;
-    splines=ortho;
-    nodesep=1.3;
-    ranksep=1.2;
-    pad=0.6;
-    bgcolor="white";
+    graph [
+        dpi=200,
+        fontname="Helvetica",
+        fontsize=12,
+        bgcolor="white",
+        rankdir=LR,
+        splines=ortho,
+        nodesep=1.3,
+        ranksep=1.2,
+        pad=0.6
+    ];
 
     node [
         style="rounded,filled",
         fontname="Helvetica-Bold",
         fontsize=13,
         fillcolor="#F9FAFB",
-        color="#9CA3AF",
-        margin=0.2,
-        penwidth=1.3
+        color="#B0BEC5",
+        penwidth=1.3,
+        margin=0.25
     ];
 
     edge [
-        color="#4B5563",
+        color="#607D8B",
         arrowsize=0.9,
-        penwidth=1.3,
+        penwidth=1.5,
         fontname="Helvetica",
         fontsize=11,
-        fontcolor="#111827"
+        fontcolor="#374151"
     ];
 """
+
         dot_inner = re.sub(r"(?is)^digraph\s+\w+\s*\{|\}$", "", dot_code.strip()).strip()
         dot_code = style_preamble + dot_inner + "\n}"
 

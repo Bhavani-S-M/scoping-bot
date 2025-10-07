@@ -1,0 +1,127 @@
+name: CI-CD to AKS via DockerHub + Helm
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  FRONTEND_IMAGE: omprasadkade/scopbot-frontend
+  BACKEND_IMAGE: omprasadkade/scopbot-backend
+  NAMESPACE: scopbot
+  HELM_DIR: ./helm
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      # ----------------------
+      # Checkout Code
+      # ----------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ----------------------
+      # Login to DockerHub
+      # ----------------------
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # ----------------------
+      # Build & Push Backend
+      # ----------------------
+      - name: Build backend image
+        run: |
+          docker build \
+            -t $BACKEND_IMAGE:${{ github.sha }} \
+            -t $BACKEND_IMAGE:latest \
+            -t $BACKEND_IMAGE:v${{ github.run_number }} \
+            ./backend
+      - name: Push backend images
+        run: |
+          docker push $BACKEND_IMAGE:${{ github.sha }}
+          docker push $BACKEND_IMAGE:latest
+          docker push $BACKEND_IMAGE:v${{ github.run_number }}
+
+      # ----------------------
+      # Build & Push Frontend
+      # ----------------------
+      - name: Build frontend image
+        run: |
+          docker build \
+            -t $FRONTEND_IMAGE:${{ github.sha }} \
+            -t $FRONTEND_IMAGE:latest \
+            -t $FRONTEND_IMAGE:v${{ github.run_number }} \
+            ./frontend
+      - name: Push frontend images
+        run: |
+          docker push $FRONTEND_IMAGE:${{ github.sha }}
+          docker push $FRONTEND_IMAGE:latest
+          docker push $FRONTEND_IMAGE:v${{ github.run_number }}
+
+      # ----------------------
+      # Azure Login & AKS Context
+      # ----------------------
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Set AKS context
+        uses: azure/aks-set-context@v3
+        with:
+          resource-group: ${{ secrets.AKS_RESOURCE_GROUP }}
+          cluster-name: ${{ secrets.AKS_CLUSTER_NAME }}
+
+      # ----------------------
+      # Helm Installation
+      # ----------------------
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      # ----------------------
+      # Create Namespace (if not exists)
+      # ----------------------
+      - name: Apply namespace
+        run: |
+          kubectl apply -f $HELM_DIR/namespaces.yaml || true
+
+      # ----------------------
+      # Apply Secrets (optional)
+      # ----------------------
+      - name: Apply secrets
+        run: |
+          if [ -f "$HELM_DIR/secrets.yaml" ]; then
+            kubectl apply -f $HELM_DIR/secrets.yaml -n $NAMESPACE
+          else
+            echo "No secrets.yaml found — skipping"
+          fi
+
+      # ----------------------
+      # Deploy Backend via Helm
+      # ----------------------
+      - name: Deploy backend via Helm
+        run: |
+          helm upgrade --install backend $HELM_DIR/backend-chart \
+            --namespace $NAMESPACE \
+            --set image.repository=$BACKEND_IMAGE \
+            --set image.tag=${{ github.sha }} \
+            --set appVersion=v${{ github.run_number }} \
+            --values $HELM_DIR/secrets.yaml || true
+
+      # ----------------------
+      # Deploy Frontend via Helm
+      # ----------------------
+      - name: Deploy frontend via Helm
+        run: |
+          helm upgrade --install frontend $HELM_DIR/frontend-chart \
+            --namespace $NAMESPACE \
+            --set image.repository=$FRONTEND_IMAGE \
+            --set image.tag=${{ github.sha }} \
+            --set appVersion=v${{ github.run_number }} \
+            --values $HELM_DIR/secrets.yaml || true
