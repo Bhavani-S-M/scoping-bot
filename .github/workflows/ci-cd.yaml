@@ -90,7 +90,7 @@ jobs:
       # ----------------------
       - name: Apply namespace
         run: |
-          kubectl apply -f $HELM_DIR/namespaces.yaml || true
+          kubectl apply -f $HELM_DIR/namespace.yaml || true
 
       # ----------------------
       # Apply Secrets (optional)
