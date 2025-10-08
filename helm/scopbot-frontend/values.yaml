@@ -6,12 +6,12 @@ image:
   pullPolicy: Always
 
 service:
-  type: LoadBalancer     
-  port: 80               
+  type: ClusterIP     # internal only (Ingress will expose)
+  port: 80
 
 backendService:
   name: scopbot-backend-svc
-  port: 8000              
+  port: 8000
 
 resources:
   requests:
@@ -26,8 +26,8 @@ namespace: scopbot
 ingress:
   enabled: true
   className: nginx
-  host: ""        
-  tlsEnabled: false
+  host: ""               # optional — can be blank for IP-based access
+  tlsEnabled: false      # ❌ no TLS
   annotations:
     nginx.ingress.kubernetes.io/proxy-body-size: "500m"
     nginx.ingress.kubernetes.io/proxy-buffering: "off"
