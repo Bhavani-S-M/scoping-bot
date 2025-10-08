@@ -5,14 +5,13 @@ FROM node:18-alpine AS builder
 
 WORKDIR /app
 
-# Install dependencies (cache layer)
+# Install dependencies efficiently
 COPY package*.json ./
 RUN npm ci --silent
 
-# Copy rest of the source and build
+# Copy source and build
 COPY . .
 RUN npm run build
-
 
 
 # -------------------------------
@@ -20,16 +19,17 @@ RUN npm run build
 # -------------------------------
 FROM nginx:alpine
 
-# Remove default nginx content
+# Remove default Nginx content
 RUN rm -rf /usr/share/nginx/html/*
 
 # Copy React build output
 COPY --from=builder /app/dist /usr/share/nginx/html
 
-# Copy custom Nginx config
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# (Optional) Enable gzip for performance
+RUN echo 'gzip on;' >> /etc/nginx/nginx.conf && \
+    echo 'gzip_types text/plain text/css application/json application/javascript text/javascript;' >> /etc/nginx/nginx.conf
 
-# Expose port 80
+# Expose Nginx port
 EXPOSE 80
 
 # Run Nginx in foreground

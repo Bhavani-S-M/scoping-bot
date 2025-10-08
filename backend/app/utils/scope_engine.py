@@ -152,17 +152,6 @@ async def _extract_text_from_files(files: List[dict]) -> str:
     return "\n\n".join(results)
 
 
-def _normalize_role_name(name: str) -> str:
-    if not name:
-        return "TBD"
-    low = name.strip().lower()
-    for key in ROLE_RATE_MAP.keys():
-        if key.lower() in low or low in key.lower():
-            return key
-    matches = difflib.get_close_matches(name, ROLE_RATE_MAP.keys(), n=1, cutoff=0.6)
-    return matches[0] if matches else "TBD"
-
-
 
 
 def _rag_retrieve(query: str, k: int = 3, expand_neighbors: bool = True) -> List[Dict]:
@@ -399,122 +388,190 @@ def _to_float(val: Any, default: float = 0.0) -> float:
         return default
     
 def _build_architecture_prompt(rfp_text: str, kb_chunks: List[str], project=None) -> str:
+    """
+    Build a context-adaptive architecture prompt that first extracts relevant entities
+    and then constructs a Graphviz DOT diagram tailored to the RFP and knowledge base.
+
+     Key Features:
+    - Forces internal reasoning before drawing
+    - Adapts clusters dynamically (Frontend, Backend, Data, AI, Security)
+    - Generates unique Graphviz DOT per project domain and RFP
+    - Produces non-static, context-driven architecture diagrams
+    """
     name = (getattr(project, "name", "") or "Untitled Project").strip()
     domain = (getattr(project, "domain", "") or "General").strip()
     tech = (getattr(project, "tech_stack", "") or "Modern Web + Cloud Stack").strip()
 
     return f"""
-You are a senior enterprise cloud architect.
-Design a **modern, minimal, color-coded, horizontally aligned system architecture diagram**
-with elegant UI styling and balanced spacing, based on the following project context.
+You are a **senior enterprise solution architect** tasked with designing a *tailored cloud system architecture diagram*
+strictly based on the provided RFP and contextual knowledge.
 
-Project Name: {name}
-Domain: {domain}
-Tech Stack: {tech}
+### PROJECT CONTEXT
+- **Project Name:** {name}
+- **Domain:** {domain}
+- **Tech Stack:** {tech}
 
-RFP Text:
+### RFP SUMMARY
 {rfp_text}
 
-Knowledge Base Context:
+### KNOWLEDGE BASE CONTEXT
 {kb_chunks}
 
-### Design Goals
-- Output **ONLY valid Graphviz DOT syntax** (no markdown or commentary)
-- Start with `digraph Architecture {{` and end with `}}`
-- **Horizontal flow (Left → Right)** using `rankdir=LR`
-- Use a **clean, modern visual theme** with subtle gradients and soft colors
-- Organize into the following **clusters (sections)**:
-  1. **Frontend / User Touchpoints** → color: `#E3F2FD` (blue tint)
-  2. **Backend / Services** → color: `#E8F5E9` (green tint)
-  3. **Data / Storage / APIs** → color: `#FFFDE7` (yellow tint)
-  4. **AI / Analytics Layer** → color: `#F3E5F5` (purple tint)
-  5. **Security / Monitoring** → color: `#ECEFF1` (gray tint)
-- Include meaningful node labels (e.g. “React Frontend”, “FastAPI Backend”, “Azure Blob Storage”, “Azure OpenAI”)
-- Keep under **15 nodes total**
-- Maintain smooth, **logical arrow flow (Frontend → Backend → Data → AI → Outputs)**
-- Use **orthogonal connectors (`splines=ortho`)** and avoid overlapping lines
-- Make it look visually balanced and presentation-grade
+---
 
-### Styling Rules
-- **Overall graph:**
-  - `dpi=200`, `ranksep=1.3`, `nodesep=1.3`
-  - `bgcolor="white"`
-- **Clusters:**
-  - `style="filled,rounded"`
-  - `fontname="Helvetica-Bold"`
-  - `fontsize=13`
-  - Rounded corners and soft color fills (no dark outlines)
-- **Nodes:**
-  - `fontname="Helvetica"`
-  - `fontsize=12`
-  - Rounded shapes with pastel backgrounds
-  - Distinct shapes per layer:
-    - `box` → UI/Frontend
-    - `box3d` → Backend/API services
-    - `cylinder` → Databases or Storage
-    - `hexagon` → APIs / Pipelines
-    - `ellipse` → AI / Analytics
-    - `diamond` → Security / Control Gateways
-- **Edges:**
-  - `color="#607D8B"`, `penwidth=1.5`, `arrowsize=0.9`
-  - Smooth orthogonal flow with minimum crossings
+###  STEP 1 — Reasoning (Internal)
+Analyze the provided RFP and knowledge base to:
+1. Identify all domain-specific **entities, systems, or technologies** mentioned or implied.
+2. Categorize each component into the most appropriate architecture layer:
+   - Frontend (UI/Apps)
+   - Backend (Services/APIs)
+   - Data (Databases, Storage, External APIs)
+   - AI/Analytics (ML, Insights, NLP, Recommendations)
+   - Security/Monitoring/DevOps (IAM, Key Vault, CI/CD, Logging)
+3. Infer **connections and data flows** between components (e.g., API requests, pipelines, message queues).
+4. Skip any layers not relevant to this RFP.
 
-### Example Layout
-digraph Architecture {{
-  rankdir=LR;
-  graph [dpi=200, fontname="Helvetica", bgcolor="white", nodesep=1.2, ranksep=1.2, splines=ortho];
+You will use this reasoning to build the architecture — but **do not include this reasoning** in your final output.
 
-  node [style="rounded,filled", color="#B0BEC5", fontname="Helvetica", fontsize=12, penwidth=1.2];
+---
 
-  subgraph cluster_frontend {{
-    label="Frontend / Touchpoints";
-    style="filled,rounded";
-    fillcolor="#E3F2FD";
-    web [label="React Web App", shape=box, fillcolor="#BBDEFB"];
-    mobile [label="Mobile App", shape=box, fillcolor="#BBDEFB"];
-  }}
+###  STEP 2 — Graphviz DOT Output
+Generate **only valid Graphviz DOT code** representing the inferred architecture.
 
-  subgraph cluster_backend {{
-    label="Backend / Internal Services";
-    style="filled,rounded";
-    fillcolor="#E8F5E9";
-    api [label="FastAPI Service", shape=box3d, fillcolor="#C8E6C9"];
-    auth [label="Auth / User Service", shape=box3d, fillcolor="#C8E6C9"];
-  }}
+Follow these rules strictly:
+- Begin with: `digraph Architecture {{`
+- End with: `}}`
+- Use **horizontal layout** → `rankdir=LR`
+- Include **only relevant clusters** (omit unused layers)
+- Keep ≤ 15 nodes total
+- Use **orthogonal edges** (`splines=ortho`)
+- Each node label must clearly represent an actual system, service, or tool
+- Logical flow should follow Frontend → Backend → Data → AI → Security (only if applicable)
+-  **Ensure data layers both receive and provide information** — show arrows *into* and *out of* data/storage nodes if analytics, AI, or reporting components exist.
 
-  subgraph cluster_data {{
-    label="Data / Storage / APIs";
-    style="filled,rounded";
-    fillcolor="#FFFDE7";
-    blob [label="Azure Blob Storage", shape=cylinder, fillcolor="#FFF9C4"];
-    db [label="PostgreSQL DB", shape=cylinder, fillcolor="#FFF9C4"];
-    search [label="Azure AI Search", shape=hexagon, fillcolor="#FFF9C4"];
-  }}
+---
 
-  subgraph cluster_ai {{
-    label="AI / Analytics Layer";
-    style="filled,rounded";
-    fillcolor="#F3E5F5";
-    openai [label="Azure OpenAI", shape=ellipse, fillcolor="#E1BEE7"];
-    reports [label="Power BI / Analytics Dashboard", shape=ellipse, fillcolor="#E1BEE7"];
-  }}
+### VISUAL STYLE
+- **Graph:** dpi=200, bgcolor="white", nodesep=1.3, ranksep=1.3
+- **Clusters:** style="filled,rounded", fontname="Helvetica-Bold", fontsize=13
+- **Node Shapes and Colors:**
+  - Frontend → `box`, pastel blue (`fillcolor="#E3F2FD"`)
+  - Backend/API → `box3d`, pastel green (`fillcolor="#E8F5E9"`)
+  - Data/Storage → `cylinder`, pastel yellow (`fillcolor="#FFFDE7"`)
+  - AI/Analytics → `ellipse`, pastel purple (`fillcolor="#F3E5F5"`)
+  - Security/Monitoring → `diamond`, gray (`fillcolor="#ECEFF1"`)
+- **Edges:** color="#607D8B", penwidth=1.5, arrowsize=0.9
 
-  subgraph cluster_security {{
-    label="Security / Monitoring";
-    style="filled,rounded";
-    fillcolor="#ECEFF1";
-    monitor [label="Azure Monitor / Grafana", shape=diamond, fillcolor="#CFD8DC"];
-    keyvault [label="Azure Key Vault", shape=diamond, fillcolor="#CFD8DC"];
-  }}
+---
 
-  # Flow Connections
-  web -> api -> db -> search -> openai -> reports;
-  mobile -> api;
-  api -> monitor;
-  search -> keyvault;
-}}
+###  STEP 3 — Domain Intelligence (Auto-Enrichment)
+If applicable, automatically enrich the architecture using these domain patterns:
+
+- **FinTech** → Payment Gateway, Fraud Detection, KYC/AML Service, Ledger DB
+- **HealthTech** → Patient Portal, EHR System, FHIR API, HIPAA Compliance Layer
+- **GovTech** → Citizen Portal, Secure API Gateway, Compliance & Audit Logging
+- **AI/ML Projects** → Model API, Embedding Store, Training Pipeline, Monitoring Service
+- **Data Platforms** → ETL Pipeline, Data Lake, BI Dashboard
+- **Enterprise SaaS** → Tenant Manager, Auth Service, Billing & Subscription Module
+
+Include these elements **only if they logically fit** the RFP description.
+
+---
+
+###  STEP 4 — OUTPUT RULES
+- Output *only* the Graphviz DOT syntax — **no markdown**, **no reasoning**, **no commentary**
+- The final response should be a single valid DOT diagram ready for rendering
 """
 
+async def _generate_fallback_architecture(
+    db: AsyncSession,
+    project,
+    blob_base_path: str
+) -> tuple[models.ProjectFile | None, str]:
+    """
+    Generate and upload a default fallback architecture diagram (4-layer generic layout).
+    Triggered when Azure OpenAI or Graphviz generation fails.
+    """
+    logger.warning(" Using fallback default architecture layout")
+
+    # --- Default DOT diagram ---
+    fallback_dot = """
+digraph Architecture {
+    rankdir=LR;
+    graph [dpi=200, bgcolor="white", nodesep=1.3, ranksep=1.2, splines=ortho];
+    node [style="rounded,filled", fontname="Helvetica-Bold", fontsize=13, penwidth=1.2];
+
+    subgraph cluster_frontend {
+        label="Frontend / User Touchpoints";
+        style="filled,rounded"; fillcolor="#E3F2FD";
+        web[label="Web App (React / Angular)", shape=box, fillcolor="#BBDEFB"];
+        mobile[label="Mobile App", shape=box, fillcolor="#BBDEFB"];
+    }
+
+    subgraph cluster_backend {
+        label="Backend / Services";
+        style="filled,rounded"; fillcolor="#E8F5E9";
+        api[label="Core API (FastAPI / Node.js)", shape=box3d, fillcolor="#C8E6C9"];
+        auth[label="Auth Service", shape=box3d, fillcolor="#C8E6C9"];
+    }
+
+    subgraph cluster_data {
+        label="Data / Storage";
+        style="filled,rounded"; fillcolor="#FFFDE7";
+        db[label="Database (PostgreSQL)", shape=cylinder, fillcolor="#FFF9C4"];
+        blob[label="Blob Storage", shape=cylinder, fillcolor="#FFF9C4"];
+    }
+
+    subgraph cluster_ai {
+        label="AI / Analytics";
+        style="filled,rounded"; fillcolor="#F3E5F5";
+        ai[label="AI Engine / Insights", shape=ellipse, fillcolor="#E1BEE7"];
+        dashboard[label="BI Dashboard", shape=ellipse, fillcolor="#E1BEE7"];
+    }
+
+    # Data flow
+    web -> api -> db;
+    mobile -> api;
+    db -> ai -> dashboard;
+    api -> auth;
+}
+"""
+
+    # --- Render DOT -> PNG ---
+    tmp_base = tempfile.NamedTemporaryFile(delete=False, suffix=".dot").name
+    try:
+        graph = graphviz.Source(fallback_dot, engine="dot")
+        graph.render(tmp_base, format="png", cleanup=True)
+        png_path = tmp_base + ".png"
+    except Exception as e:
+        logger.error(f" Fallback Graphviz rendering failed: {e}")
+        return None, ""
+
+    # --- Upload to Azure Blob ---
+    blob_name = f"{blob_base_path}/architecture_fallback_{project.id}.png"
+    try:
+        with open(png_path, "rb") as fh:
+            png_bytes = fh.read()
+        await azure_blob.upload_bytes(png_bytes, blob_name)
+    finally:
+        for path in [png_path, tmp_base]:
+            try:
+                os.remove(path)
+            except FileNotFoundError:
+                pass
+
+    # --- Save record in DB ---
+    db_file = models.ProjectFile(
+        project_id=project.id,
+        file_name="architecture.png",
+        file_path=blob_name,
+    )
+    db.add(db_file)
+    await db.commit()
+    await db.refresh(db_file)
+
+    logger.info(f" Default fallback architecture stored at {blob_name}")
+    return db_file, blob_name
 
 
 async def generate_architecture(
@@ -525,133 +582,154 @@ async def generate_architecture(
     blob_base_path: str,
 ) -> tuple[models.ProjectFile | None, str]:
     """
-    Generate a visually clean, high-quality architecture diagram (PNG)
-    from RFP + KB context, upload to Azure Blob Storage,
-    save record in ProjectFile, and return (db_file, blob_path).
-    Each project's diagram is unique based on its RFP/domain context.
+    Generate a visually clean, context-aware architecture diagram (PNG & SVG)
+    from RFP + KB context using Azure OpenAI + Graphviz.
+    Uses dynamic prompts that adapt layers automatically (no static template).
+    Includes retry logic, sanitization, validation, and fallback diagram.
     """
     if client is None or deployment is None:
-        logger.warning("Azure OpenAI not configured — skipping architecture generation")
+        logger.warning("⚠️ Azure OpenAI not configured — skipping architecture generation")
         return None, ""
 
     prompt = _build_architecture_prompt(rfp_text, kb_chunks, project)
 
-    try:
-        # --- Step 1: Ask Azure OpenAI for Graphviz DOT code ---
-        resp = await anyio.to_thread.run_sync(
-            lambda: client.chat.completions.create(
-                model=deployment,
-                messages=[
-                    {"role": "system", "content": "You are an expert cloud software architect."},
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=0.7,
-            )
-        )
-        dot_code = resp.choices[0].message.content.strip()
-
-        # --- Step 2: Clean and validate DOT code ---
-        dot_code = re.sub(r"```[a-zA-Z]*", "", dot_code).replace("```", "").strip()
-        dot_code = dot_code.strip("`").strip()
-
-        if not dot_code.lower().startswith("digraph"):
-            dot_code = f"digraph Architecture {{\n{dot_code}\n}}"
-
-        # --- Step 3: Inject clean styling preamble (with embedded DPI + font) ---
-        style_preamble = """
-digraph Architecture {
-    graph [
-        dpi=200,
-        fontname="Helvetica",
-        fontsize=12,
-        bgcolor="white",
-        rankdir=LR,
-        splines=ortho,
-        nodesep=1.3,
-        ranksep=1.2,
-        pad=0.6
-    ];
-
-    node [
-        style="rounded,filled",
-        fontname="Helvetica-Bold",
-        fontsize=13,
-        fillcolor="#F9FAFB",
-        color="#B0BEC5",
-        penwidth=1.3,
-        margin=0.25
-    ];
-
-    edge [
-        color="#607D8B",
-        arrowsize=0.9,
-        penwidth=1.5,
-        fontname="Helvetica",
-        fontsize=11,
-        fontcolor="#374151"
-    ];
-"""
-
-        dot_inner = re.sub(r"(?is)^digraph\s+\w+\s*\{|\}$", "", dot_code.strip()).strip()
-        dot_code = style_preamble + dot_inner + "\n}"
-
-        # --- Step 4: Render DOT → High-resolution PNG ---
+    # ---------- Step 1: Ask Azure OpenAI for Graphviz DOT code ----------
+    async def _generate_dot_from_ai(retry: int = 0) -> str:
+        """Call Azure OpenAI with retry logic."""
         try:
-            graph = graphviz.Source(dot_code, engine="dot")  # neat layout engine
-            tmp_png = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+            resp = await anyio.to_thread.run_sync(
+                lambda: client.chat.completions.create(
+                    model=deployment,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are an expert cloud solution architect. "
+                                "You must output ONLY valid Graphviz DOT syntax — no markdown or commentary."
+                            ),
+                        },
+                        {"role": "user", "content": prompt},
+                    ],
+                    temperature=0.7,
+                )
+            )
 
-            # Just render — Graphviz uses internal anti-aliasing when dpi=200 is set above
-            graph.render(tmp_png.name, format="png", cleanup=True)
+            ai_output = resp.choices[0].message.content.strip()
 
-            png_path = tmp_png.name + ".png"
+            # Log reasoning part (everything before 'digraph')
+            if "digraph" in ai_output:
+                reasoning = ai_output.split("digraph", 1)[0].strip()
+                if reasoning:
+                    logger.info(f" Architecture reasoning summary:\n{reasoning[:800]}")
+                ai_output = "digraph" + ai_output.split("digraph", 1)[1]
+
+            return ai_output
         except Exception as e:
-            logger.error(f"Graphviz rendering failed: {e}\n--- DOT Snippet ---\n{dot_code[:600]}")
-            return None, ""
+            if retry < 2:
+                logger.warning(f" AI call failed (retry {retry+1}/3): {e}")
+                await anyio.sleep(2)
+                return await _generate_dot_from_ai(retry + 1)
+            logger.error(f" Azure OpenAI architecture generation failed after retries: {e}")
+            return ""
 
-        # --- Step 5: Upload PNG to Azure Blob ---
-        blob_name = f"{blob_base_path}/architecture_{project.id}.png"
-        with open(png_path, "rb") as fh:
-            png_bytes = fh.read()
-        await azure_blob.upload_bytes(png_bytes, blob_name)
+    dot_code = await _generate_dot_from_ai()
+    if not dot_code:
+        logger.warning(" No DOT code returned by AI — generating fallback diagram")
+        return await _generate_fallback_architecture(db, project, blob_base_path)
 
-        try:
-            os.remove(png_path)
-        except FileNotFoundError:
-            pass
+    # ---------- Step 2: Clean & sanitize DOT ----------
+    dot_code = re.sub(r"```[a-zA-Z]*", "", dot_code).replace("```", "").strip()
+    dot_code = dot_code.strip("`").strip()
+    dot_code = re.sub(r"(?i)^graph\s", "digraph ", dot_code)
 
-        # --- Step 6: Replace old record if exists ---
-        result = await db.execute(
-            select(models.ProjectFile).filter(
-                models.ProjectFile.project_id == project.id,
-                models.ProjectFile.file_name == "architecture.png",
-            )
-        )
-        old_file = result.scalars().first()
-        if old_file:
-            try:
-                await azure_blob.delete_blob(old_file.file_path)
-                await db.delete(old_file)
-                await db.commit()
-            except Exception as e:
-                logger.warning(f"Failed to delete old architecture.png: {e}")
+    # Fix brace mismatch
+    open_braces = dot_code.count("{")
+    close_braces = dot_code.count("}")
+    if open_braces > close_braces:
+        dot_code += "}" * (open_braces - close_braces)
+    elif close_braces > open_braces:
+        dot_code = "digraph Architecture {\n" + dot_code
 
-        # --- Step 7: Save new ProjectFile record ---
-        db_file = models.ProjectFile(
-            project_id=project.id,
-            file_name="architecture.png",
-            file_path=blob_name,
-        )
-        db.add(db_file)
-        await db.commit()
-        await db.refresh(db_file)
+    if not dot_code.lower().startswith("digraph"):
+        dot_code = f"digraph Architecture {{\n{dot_code}\n}}"
 
-        logger.info(f"Clean architecture diagram generated and stored at {blob_name}")
-        return db_file, blob_name
+    # Remove control characters
+    dot_code = re.sub(r"[^\x09\x0A\x0D\x20-\x7E]", "", dot_code)
 
+    # ---------- Step 3: Do NOT override GPT’s style ----------
+    # Keep GPT’s own clusters, nodes, and colors — just ensure it's syntactically valid
+    # (Old static preamble removed intentionally)
+
+    # ---------- Step 4: Render DOT → PNG & SVG ----------
+    try:
+        tmp_base = tempfile.NamedTemporaryFile(delete=False, suffix=".dot").name
+        graph = graphviz.Source(dot_code, engine="dot")
+
+        # Render both PNG and SVG for better clarity
+        graph.render(tmp_base, format="png", cleanup=True)
+        graph.render(tmp_base, format="svg", cleanup=True)
+
+        png_path = tmp_base + ".png"
+        svg_path = tmp_base + ".svg"
     except Exception as e:
-        logger.error(f"Architecture generation failed: {e}")
-        return None, ""
+        logger.error(f"❌ Graphviz rendering failed: {e}\n--- DOT Snippet ---\n{dot_code[:800]}")
+        return await _generate_fallback_architecture(db, project, blob_base_path)
 
+    # ---------- Step 5: Upload PNG to Azure Blob ----------
+    blob_name_png = f"{blob_base_path}/architecture_{project.id}.png"
+    blob_name_svg = f"{blob_base_path}/architecture_{project.id}.svg"
+
+    try:
+        with open(png_path, "rb") as fh:
+            await azure_blob.upload_bytes(fh.read(), blob_name_png)
+
+        with open(svg_path, "rb") as fh:
+            await azure_blob.upload_bytes(fh.read(), blob_name_svg)
+    finally:
+        for path in [png_path, svg_path, tmp_base]:
+            try:
+                os.remove(path)
+            except FileNotFoundError:
+                pass
+
+    # ---------- Step 6: Replace old architecture file ----------
+    result = await db.execute(
+        select(models.ProjectFile).filter(
+            models.ProjectFile.project_id == project.id,
+            models.ProjectFile.file_name == "architecture.png",
+        )
+    )
+    old_file = result.scalars().first()
+    if old_file:
+        try:
+            await azure_blob.delete_blob(old_file.file_path)
+            await db.delete(old_file)
+            await db.commit()
+        except Exception as e:
+            logger.warning(f"🟡 Failed to delete old architecture.png: {e}")
+
+    # ---------- Step 7: Save new ProjectFile record ----------
+    db_file = models.ProjectFile(
+        project_id=project.id,
+        file_name="architecture.png",
+        file_path=blob_name_png,
+    )
+    db.add(db_file)
+    await db.commit()
+    await db.refresh(db_file)
+
+    # ---------- Step 8: Log summary ----------
+    try:
+        node_count = len(re.findall(r"\[label=", dot_code))
+        cluster_count = len(re.findall(r"subgraph\s+cluster_", dot_code))
+        logger.info(
+            f"✅ Context-aware architecture diagram generated for project {project.id} "
+            f"→ {blob_name_png} (nodes={node_count}, clusters={cluster_count})"
+        )
+    except Exception:
+        logger.info(f"✅ Architecture diagram generated for project {project.id} → {blob_name_png}")
+
+    return db_file, blob_name_png
 
 # --- Cleaner ---
 
@@ -817,8 +895,8 @@ async def generate_project_scope(db: AsyncSession, project) -> dict:
 
     # ---------- Trim RFP text ----------
     rfp_tokens = tokenizer.encode(rfp_text or "")
-    if len(rfp_tokens) > 3000:
-        rfp_tokens = rfp_tokens[:3000]
+    if len(rfp_tokens) > 5000:
+        rfp_tokens = rfp_tokens[:5000]
     rfp_text = tokenizer.decode(rfp_tokens)
     used_tokens += len(rfp_tokens)
 
