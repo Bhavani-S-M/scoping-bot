@@ -25,27 +25,34 @@ RUN rm -rf /usr/share/nginx/html/*
 # Copy React build output
 COPY --from=builder /app/dist /usr/share/nginx/html
 
-# Custom Nginx config to handle SPA routing and .mjs MIME
-RUN echo 'server {\n\
-    listen 80;\n\
-    server_name _;\n\
-    root /usr/share/nginx/html;\n\
-    index index.html;\n\
-    include /etc/nginx/mime.types;\n\
-\n\
-    # SPA routing fix (main part)\n\
-    location / {\n\
-        try_files $uri /index.html;\n\
-    }\n\
-\n\
-    # Fix MIME for modern JS modules (.mjs)\n\
-    location ~* \.(mjs|js)$ {\n\
-        add_header Content-Type application/javascript;\n\
-    }\n\
-}' > /etc/nginx/conf.d/default.conf
+# ✅ Reliable multiline Nginx config (fixes SPA + .mjs)
+RUN cat <<'EOF' > /etc/nginx/conf.d/default.conf
+server {
+    listen 80;
+    server_name _;
+    root /usr/share/nginx/html;
+    index index.html;
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+
+    # --- SPA routing fix (prevents 404 on refresh) ---
+    location / {
+        try_files $uri /index.html;
+    }
+
+    # --- Fix MIME type for modern JS modules (.mjs) ---
+    location ~* \.(mjs|js)$ {
+        add_header Content-Type application/javascript;
+    }
+
+    # --- Optional performance tuning ---
+    gzip on;
+    gzip_types text/plain text/css application/json application/javascript text/javascript;
+    gzip_min_length 256;
+}
+EOF
 
 # Expose Nginx port
 EXPOSE 80
 
 CMD ["nginx", "-g", "daemon off;"]
-
