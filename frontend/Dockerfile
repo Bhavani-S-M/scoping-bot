@@ -19,18 +19,33 @@ RUN npm run build
 # -------------------------------
 FROM nginx:alpine
 
-# Clean existing Nginx web directory
+# Clean existing Nginx content
 RUN rm -rf /usr/share/nginx/html/*
 
 # Copy React build output
 COPY --from=builder /app/dist /usr/share/nginx/html
 
-#  Fix MIME type for .mjs (avoid browser module errors)
-RUN sed -i '1i include /etc/nginx/mime.types;' /etc/nginx/conf.d/default.conf && \
-    echo "    types { application/javascript js mjs; }" >> /etc/nginx/conf.d/default.conf
+# Custom Nginx config to handle SPA routing and .mjs MIME
+RUN echo 'server {\n\
+    listen 80;\n\
+    server_name _;\n\
+    root /usr/share/nginx/html;\n\
+    index index.html;\n\
+    include /etc/nginx/mime.types;\n\
+\n\
+    # SPA routing fix (main part)\n\
+    location / {\n\
+        try_files $uri /index.html;\n\
+    }\n\
+\n\
+    # Fix MIME for modern JS modules (.mjs)\n\
+    location ~* \.(mjs|js)$ {\n\
+        add_header Content-Type application/javascript;\n\
+    }\n\
+}' > /etc/nginx/conf.d/default.conf
 
 # Expose Nginx port
 EXPOSE 80
 
-# Start Nginx in the foreground
 CMD ["nginx", "-g", "daemon off;"]
+
