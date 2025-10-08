@@ -6,12 +6,12 @@ image:
   pullPolicy: Always
 
 service:
-  type: ClusterIP
-  port: 80
+  type: LoadBalancer     
+  port: 80               
 
 backendService:
   name: scopbot-backend-svc
-  port: 8000
+  port: 8000              
 
 resources:
   requests:
@@ -24,13 +24,4 @@ resources:
 namespace: scopbot
 
 ingress:
-  enabled: true
-  className: nginx
-  host: scopbot.cloudapp.azure.com
-  tlsEnabled: true
-  annotations:
-    cert-manager.io/cluster-issuer: "letsencrypt-prod"
-  tls:
-    - hosts:
-        - scopbot.eastus.cloudapp.azure.com
-      secretName: scopbot-tls
+  enabled: false
