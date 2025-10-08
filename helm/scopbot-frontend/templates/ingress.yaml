@@ -19,16 +19,8 @@ metadata:
 spec:
   ingressClassName: {{ .Values.ingress.className }}
 
-  {{- if .Values.ingress.tlsEnabled }}
-  tls:
-    - hosts:
-        - {{ .Values.ingress.host }}
-      secretName: scopbot-tls
-  {{- end }}
-
   rules:
-    - host: {{ .Values.ingress.host }}
-      http:
+    - http:
         paths:
           # Frontend (React)
           - path: /
@@ -44,7 +36,7 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: scopbot-backend-svc
+                name: {{ .Values.backendService.name }}
                 port:
-                  number: 8000
+                  number: {{ .Values.backendService.port }}
 {{- end }}
