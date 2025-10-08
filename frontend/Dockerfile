@@ -15,22 +15,18 @@ RUN npm run build
 
 
 # -------------------------------
-# Stage 2: Serve with Nginx
+# Stage 2: Serve static build with Nginx
 # -------------------------------
 FROM nginx:alpine
 
-# Remove default Nginx content
+# Clean existing Nginx web directory
 RUN rm -rf /usr/share/nginx/html/*
 
 # Copy React build output
 COPY --from=builder /app/dist /usr/share/nginx/html
 
-# (Optional) Enable gzip for performance
-RUN echo 'gzip on;' >> /etc/nginx/nginx.conf && \
-    echo 'gzip_types text/plain text/css application/json application/javascript text/javascript;' >> /etc/nginx/nginx.conf
-
 # Expose Nginx port
 EXPOSE 80
 
-# Run Nginx in foreground
+# Start Nginx in the foreground
 CMD ["nginx", "-g", "daemon off;"]
