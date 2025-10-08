@@ -21,9 +21,6 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - containerPort: {{ .Values.service.port }}
-          volumeMounts:
-            - name: nginx-config
-              mountPath: /etc/nginx/conf.d
           readinessProbe:
             httpGet:
               path: /
@@ -36,7 +33,3 @@ spec:
             initialDelaySeconds: 30
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
-      volumes:
-        - name: nginx-config
-          configMap:
-            name: {{ include "scopbot-frontend.fullname" . }}-nginx-config
