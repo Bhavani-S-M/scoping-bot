@@ -25,6 +25,10 @@ RUN rm -rf /usr/share/nginx/html/*
 # Copy React build output
 COPY --from=builder /app/dist /usr/share/nginx/html
 
+#  Fix MIME type for .mjs (avoid browser module errors)
+RUN sed -i '1i include /etc/nginx/mime.types;' /etc/nginx/conf.d/default.conf && \
+    echo "    types { application/javascript js mjs; }" >> /etc/nginx/conf.d/default.conf
+
 # Expose Nginx port
 EXPOSE 80
 
