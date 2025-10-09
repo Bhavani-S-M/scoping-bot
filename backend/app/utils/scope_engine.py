@@ -1,5 +1,5 @@
 # app/utils/scope_engine.py
-import json, re, logging, difflib, os, tempfile,anyio,pytesseract, openpyxl,tiktoken, pytz, graphviz
+import json, re, logging, math, os, tempfile,anyio,pytesseract, openpyxl,tiktoken, pytz, graphviz
 
 from calendar import monthrange
 from pdfminer.high_level import extract_text as extract_pdf_text
@@ -805,35 +805,65 @@ def clean_scope(data: Dict[str, Any], project=None) -> Dict[str, Any]:
         start_dates.append(s)
         end_dates.append(e)
 
-    # --- Sort activities ---
+        # --- Sort activities ---
     activities.sort(key=lambda x: x["Start Date"])
     for idx, a in enumerate(activities, start=1):
         a["ID"] = idx
         a["Start Date"] = a["Start Date"].strftime("%Y-%m-%d")
         a["End Date"] = a["End Date"].strftime("%Y-%m-%d")
 
-    # --- Project span & month labels ---
+    # --- Project span & month labels (Month 1, Month 2, ...) ---
     min_start = min(start_dates) if start_dates else today
     max_end = max(end_dates) if end_dates else min_start
     duration = max(1.0, round(max(1, (max_end - min_start).days) / 30.0, 2))
+    total_months = max(1, math.ceil((max_end - min_start).days / 30.0))
 
-    month_labels = []
-    cur = datetime(min_start.year, min_start.month, 1)
-    while cur <= max_end:
-        month_labels.append(cur.strftime("%b %Y"))
-        if cur.month == 12:
-            cur = datetime(cur.year + 1, 1, 1)
-        else:
-            cur = datetime(cur.year, cur.month + 1, 1)
+    month_labels = [f"Month {i}" for i in range(1, total_months + 1)]
 
-    # --- Resourcing Plan ---
+    # --- Build per-role, per-month day usage ---
+    role_month_usage: Dict[str, Dict[str, float]] = {r: {m: 0.0 for m in month_labels} for r in role_order}
+
+    # Compute total active days per relative month window
+    for act in activities:
+        s = _parse_date_safe(act.get("Start Date"), today)
+        e = _parse_date_safe(act.get("End Date"), s + timedelta(days=30))
+        if e < s:
+            e = s + timedelta(days=30)
+
+        involved_roles = [act.get("Owner") or "Unassigned"] + [
+            r.strip() for r in str(act.get("Resources") or "").split(",") if r.strip()
+        ]
+
+        for m_idx in range(total_months):
+            rel_start = min_start + timedelta(days=m_idx * 30)
+            rel_end = min_start + timedelta(days=(m_idx + 1) * 30)
+
+            # overlap between activity and this relative month window
+            overlap_start = max(s, rel_start)
+            overlap_end = min(e, rel_end)
+            overlap_days = max(0, (overlap_end - overlap_start).days)
+
+            if overlap_days > 0:
+                for r in involved_roles:
+                    if r not in role_month_usage:
+                        role_month_usage[r] = {ml: 0.0 for ml in month_labels}
+                    role_month_usage[r][f"Month {m_idx + 1}"] += overlap_days
+
+    # --- Convert days to effort (≥15 -> 1, 1–14 -> 0.5, else 0) ---
+    for r, months in role_month_usage.items():
+        for m, days in months.items():
+            if days >= 15:
+                months[m] = 1
+            elif days > 1:
+                months[m] = 0.5
+            else:
+                months[m] = 0
+
+    # --- Build final resourcing plan ---
     resourcing_plan = []
     for idx, role in enumerate(role_order, start=1):
-        month_map = role_month_map[role]
-        month_efforts = {m: round(month_map.get(m, 0.0), 2) for m in month_labels}
-        total_effort = round(sum(month_efforts.values()), 2)
-        if total_effort <= 0:
-            continue
+        month_efforts = role_month_usage.get(role, {m: 0 for m in month_labels})
+        total_effort = sum(month_efforts.values())
         rate = ROLE_RATE_MAP.get(role, 2000.0)
         cost = round(total_effort * rate, 2)
         plan_entry = {
@@ -842,9 +872,10 @@ def clean_scope(data: Dict[str, Any], project=None) -> Dict[str, Any]:
             "Rate/month": rate,
             **month_efforts,
             "Efforts": total_effort,
-            "Cost": cost
+            "Cost": cost,
         }
         resourcing_plan.append(plan_entry)
+
 
     # --- Overview ---
     ov = data.get("overview") or {}
