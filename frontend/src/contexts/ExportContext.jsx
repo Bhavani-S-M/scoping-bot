@@ -14,7 +14,7 @@ export const ExportProvider = ({ children }) => {
       setError(null);
       return await fn(...args);
     } catch (err) {
-      console.error("❌ Export failed:", err);
+      console.error(" Export failed:", err);
       const message =
         err?.message ||
         err?.response?.data?.detail ||
@@ -39,17 +39,19 @@ export const ExportProvider = ({ children }) => {
   const getPdfBlob = (id, opts = {}) =>
     handleExport(exportApi.getPdfBlob, id, opts);
 
-  // ❌ Removed misleading getFinalizedScope here
-  // ✅ Use ProjectContext.getFinalizedScope instead
-
   // ---------- Previews (draft-only, before finalization) ----------
   const previewJson = (id, scope, opts = {}) => {
     if (!scope || Object.keys(scope).length === 0) return {};
+    console.log("JSON preview scope:", scope);
+    console.log("JSON preview opts:", opts);
     return handleExport(exportApi.previewJson, id, scope, opts);
+
   };
 
   const previewExcel = (id, scope, opts = {}) => {
     if (!scope || Object.keys(scope).length === 0) return null;
+    console.log("Excel preview scope:", scope);
+
     return handleExport(exportApi.previewExcel, id, scope, opts);
   };
 
@@ -67,21 +69,14 @@ export const ExportProvider = ({ children }) => {
   return (
     <ExportContext.Provider
       value={{
-        // finalized exports
         downloadExcel,
         downloadPdf,
         exportJson,
         getPdfBlob,
-
-        // draft previews
         previewJson,
         previewExcel,
         previewPdf,
-
-        // regeneration
         regenerateScope,
-
-        // context state
         loading,
         error,
       }}

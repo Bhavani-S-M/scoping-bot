@@ -1,6 +1,8 @@
 # app/utils/scope_engine.py
+from __future__ import annotations
+import asyncio
 import json, re, logging, math, os, tempfile,anyio,pytesseract, openpyxl,tiktoken, pytz, graphviz
-
+from app import models
 from calendar import monthrange
 from pdfminer.high_level import extract_text as extract_pdf_text
 from docx import Document
@@ -14,7 +16,6 @@ from app.utils import azure_blob
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
-from app import models
 from app.utils.ai_clients import (
     get_azure_openai_client,
     get_azure_openai_deployment,
@@ -70,6 +71,38 @@ def _extract_json(s: str) -> dict:
             except Exception:
                 return {}
         return {}
+async def get_rate_map_for_project(db: AsyncSession, project) -> Dict[str, float]:
+    """
+    Fetch rate cards for the given project/company.
+    Falls back to Sigmoid default rates if none exist
+    """
+    try:
+        # If project has company_id, try fetching company-specific rate cards
+        if getattr(project, "company_id", None):
+            result = await db.execute(
+                select(models.RateCard)
+                .filter(models.RateCard.company_id == project.company_id)
+            )
+            ratecards = result.scalars().all()
+            if ratecards:
+                return {r.role_name: float(r.monthly_rate) for r in ratecards}
+
+        sigmoid_result = await db.execute(
+            select(models.Company).filter(models.Company.name == "Sigmoid")
+        )
+        sigmoid = sigmoid_result.scalars().first()
+        if sigmoid:
+            result = await db.execute(
+                select(models.RateCard)
+                .filter(models.RateCard.company_id == sigmoid.id)
+            )
+            sigmoid_rates = result.scalars().all()
+            if sigmoid_rates:
+                return {r.role_name: float(r.monthly_rate) for r in sigmoid_rates}
+
+    except Exception as e:
+        logger.warning(f"Failed to fetch rate cards: {e}")
+    return ROLE_RATE_MAP
 
 
 async def _extract_text_from_files(files: List[dict]) -> str:
@@ -84,7 +117,6 @@ async def _extract_text_from_files(files: List[dict]) -> str:
                 content = ""
                 try:
                     if suffix == ".pdf":
-                        # pdfminer needs a temp file
                         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
                             tmp.write(blob_bytes)
                             tmp_path = tmp.name
@@ -119,7 +151,6 @@ async def _extract_text_from_files(files: List[dict]) -> str:
                         content = pytesseract.image_to_string(img)
 
                     else:
-                        # fallback plain text (requires temp file because openpyxl/docx won't apply)
                         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
                             tmp.write(blob_bytes)
                             tmp_path = tmp.name
@@ -144,7 +175,6 @@ async def _extract_text_from_files(files: List[dict]) -> str:
         except Exception as e:
             logger.warning(f"Failed to extract {f.get('file_name')} (path={f.get('file_path')}): {e}")
 
-    # Run parallel with TaskGroup
     async with anyio.create_task_group() as tg:
         for f in files:
             tg.start_soon(_extract_single, f)
@@ -221,7 +251,7 @@ def _rag_retrieve(query: str, k: int = 3, expand_neighbors: bool = True) -> List
             grouped.setdefault(h["parent_id"], []).append(h)
 
         # ---- Token budget check ----
-        model_name = deployment   # ✅ fixed
+        model_name = deployment
         tokenizer = tiktoken.encoding_for_model(model_name)
         context_limit = 128000
         max_tokens = context_limit - 4000 
@@ -305,7 +335,7 @@ def _build_scope_prompt(rfp_text: str, kb_chunks: List[str], project=None, model
         f"Duration (months): {duration or '(infer if missing)'}\n\n"
     )
 
-    today_str = datetime.date.today().isoformat()  # yyyy-mm-dd
+    today_str = datetime.date.today().isoformat()
 
     # ---------- Final Prompt ----------
     return (
@@ -366,9 +396,6 @@ def _build_scope_prompt(rfp_text: str, kb_chunks: List[str], project=None, model
     )
 
 
-# Post-clean (raw AI output)
-
-
 def _parse_date_safe(val: Any, fallback: datetime = None) -> datetime:
     """Try to parse a date string; return fallback if invalid."""
     if not val:
@@ -381,107 +408,92 @@ def _parse_date_safe(val: Any, fallback: datetime = None) -> datetime:
 def _safe_str(val: Any) -> str:
     return str(val).strip() if val is not None else ""
 
-def _to_float(val: Any, default: float = 0.0) -> float:
-    try:
-        return float(val)
-    except Exception:
-        return default
     
 def _build_architecture_prompt(rfp_text: str, kb_chunks: List[str], project=None) -> str:
-    """
-    Build a context-adaptive architecture prompt that first extracts relevant entities
-    and then constructs a Graphviz DOT diagram tailored to the RFP and knowledge base.
-
-     Key Features:
-    - Forces internal reasoning before drawing
-    - Adapts clusters dynamically (Frontend, Backend, Data, AI, Security)
-    - Generates unique Graphviz DOT per project domain and RFP
-    - Produces non-static, context-driven architecture diagrams
-    """
     name = (getattr(project, "name", "") or "Untitled Project").strip()
     domain = (getattr(project, "domain", "") or "General").strip()
     tech = (getattr(project, "tech_stack", "") or "Modern Web + Cloud Stack").strip()
 
     return f"""
-You are a **senior enterprise solution architect** tasked with designing a *tailored cloud system architecture diagram*
-strictly based on the provided RFP and contextual knowledge.
+    You are a **senior enterprise solution architect** tasked with designing a *tailored cloud system architecture diagram*
+    strictly based on the provided RFP and contextual knowledge.
 
-### PROJECT CONTEXT
-- **Project Name:** {name}
-- **Domain:** {domain}
-- **Tech Stack:** {tech}
+    ### PROJECT CONTEXT
+    - **Project Name:** {name}
+    - **Domain:** {domain}
+    - **Tech Stack:** {tech}
 
-### RFP SUMMARY
-{rfp_text}
+    ### RFP SUMMARY
+    {rfp_text}
 
-### KNOWLEDGE BASE CONTEXT
-{kb_chunks}
+    ### KNOWLEDGE BASE CONTEXT
+    {kb_chunks}
 
----
+    ---
 
-###  STEP 1 — Reasoning (Internal)
-Analyze the provided RFP and knowledge base to:
-1. Identify all domain-specific **entities, systems, or technologies** mentioned or implied.
-2. Categorize each component into the most appropriate architecture layer:
-   - Frontend (UI/Apps)
-   - Backend (Services/APIs)
-   - Data (Databases, Storage, External APIs)
-   - AI/Analytics (ML, Insights, NLP, Recommendations)
-   - Security/Monitoring/DevOps (IAM, Key Vault, CI/CD, Logging)
-3. Infer **connections and data flows** between components (e.g., API requests, pipelines, message queues).
-4. Skip any layers not relevant to this RFP.
+    ###  STEP 1 — Reasoning (Internal)
+    Analyze the provided RFP and knowledge base to:
+    1. Identify all domain-specific **entities, systems, or technologies** mentioned or implied.
+    2. Categorize each component into the most appropriate architecture layer:
+    - Frontend (UI/Apps)
+    - Backend (Services/APIs)
+    - Data (Databases, Storage, External APIs)
+    - AI/Analytics (ML, Insights, NLP, Recommendations)
+    - Security/Monitoring/DevOps (IAM, Key Vault, CI/CD, Logging)
+    3. Infer **connections and data flows** between components (e.g., API requests, pipelines, message queues).
+    4. Skip any layers not relevant to this RFP.
 
-You will use this reasoning to build the architecture — but **do not include this reasoning** in your final output.
+    You will use this reasoning to build the architecture — but **do not include this reasoning** in your final output.
 
----
+    ---
 
-###  STEP 2 — Graphviz DOT Output
-Generate **only valid Graphviz DOT code** representing the inferred architecture.
+    ###  STEP 2 — Graphviz DOT Output
+    Generate **only valid Graphviz DOT code** representing the inferred architecture.
 
-Follow these rules strictly:
-- Begin with: `digraph Architecture {{`
-- End with: `}}`
-- Use **horizontal layout** → `rankdir=LR`
-- Include **only relevant clusters** (omit unused layers)
-- Keep ≤ 15 nodes total
-- Use **orthogonal edges** (`splines=ortho`)
-- Each node label must clearly represent an actual system, service, or tool
-- Logical flow should follow Frontend → Backend → Data → AI → Security (only if applicable)
--  **Ensure data layers both receive and provide information** — show arrows *into* and *out of* data/storage nodes if analytics, AI, or reporting components exist.
+    Follow these rules strictly:
+    - Begin with: `digraph Architecture {{`
+    - End with: `}}`
+    - Use **horizontal layout** → `rankdir=LR`
+    - Include **only relevant clusters** (omit unused layers)
+    - Keep ≤ 15 nodes total
+    - Use **orthogonal edges** (`splines=ortho`)
+    - Each node label must clearly represent an actual system, service, or tool
+    - Logical flow should follow Frontend → Backend → Data → AI → Security (only if applicable)
+    -  **Ensure data layers both receive and provide information** — show arrows *into* and *out of* data/storage nodes if analytics, AI, or reporting components exist.
 
----
+    ---
 
-### VISUAL STYLE
-- **Graph:** dpi=200, bgcolor="white", nodesep=1.3, ranksep=1.3
-- **Clusters:** style="filled,rounded", fontname="Helvetica-Bold", fontsize=13
-- **Node Shapes and Colors:**
-  - Frontend → `box`, pastel blue (`fillcolor="#E3F2FD"`)
-  - Backend/API → `box3d`, pastel green (`fillcolor="#E8F5E9"`)
-  - Data/Storage → `cylinder`, pastel yellow (`fillcolor="#FFFDE7"`)
-  - AI/Analytics → `ellipse`, pastel purple (`fillcolor="#F3E5F5"`)
-  - Security/Monitoring → `diamond`, gray (`fillcolor="#ECEFF1"`)
-- **Edges:** color="#607D8B", penwidth=1.5, arrowsize=0.9
+    ### VISUAL STYLE
+    - **Graph:** dpi=200, bgcolor="white", nodesep=1.3, ranksep=1.3
+    - **Clusters:** style="filled,rounded", fontname="Helvetica-Bold", fontsize=13
+    - **Node Shapes and Colors:**
+    - Frontend → `box`, pastel blue (`fillcolor="#E3F2FD"`)
+    - Backend/API → `box3d`, pastel green (`fillcolor="#E8F5E9"`)
+    - Data/Storage → `cylinder`, pastel yellow (`fillcolor="#FFFDE7"`)
+    - AI/Analytics → `ellipse`, pastel purple (`fillcolor="#F3E5F5"`)
+    - Security/Monitoring → `diamond`, gray (`fillcolor="#ECEFF1"`)
+    - **Edges:** color="#607D8B", penwidth=1.5, arrowsize=0.9
 
----
+    ---
 
-###  STEP 3 — Domain Intelligence (Auto-Enrichment)
-If applicable, automatically enrich the architecture using these domain patterns:
+    ###  STEP 3 — Domain Intelligence (Auto-Enrichment)
+    If applicable, automatically enrich the architecture using these domain patterns:
 
-- **FinTech** → Payment Gateway, Fraud Detection, KYC/AML Service, Ledger DB
-- **HealthTech** → Patient Portal, EHR System, FHIR API, HIPAA Compliance Layer
-- **GovTech** → Citizen Portal, Secure API Gateway, Compliance & Audit Logging
-- **AI/ML Projects** → Model API, Embedding Store, Training Pipeline, Monitoring Service
-- **Data Platforms** → ETL Pipeline, Data Lake, BI Dashboard
-- **Enterprise SaaS** → Tenant Manager, Auth Service, Billing & Subscription Module
+    - **FinTech** → Payment Gateway, Fraud Detection, KYC/AML Service, Ledger DB
+    - **HealthTech** → Patient Portal, EHR System, FHIR API, HIPAA Compliance Layer
+    - **GovTech** → Citizen Portal, Secure API Gateway, Compliance & Audit Logging
+    - **AI/ML Projects** → Model API, Embedding Store, Training Pipeline, Monitoring Service
+    - **Data Platforms** → ETL Pipeline, Data Lake, BI Dashboard
+    - **Enterprise SaaS** → Tenant Manager, Auth Service, Billing & Subscription Module
 
-Include these elements **only if they logically fit** the RFP description.
+    Include these elements **only if they logically fit** the RFP description.
 
----
+    ---
 
-###  STEP 4 — OUTPUT RULES
-- Output *only* the Graphviz DOT syntax — **no markdown**, **no reasoning**, **no commentary**
-- The final response should be a single valid DOT diagram ready for rendering
-"""
+    ###  STEP 4 — OUTPUT RULES
+    - Output *only* the Graphviz DOT syntax — **no markdown**, **no reasoning**, **no commentary**
+    - The final response should be a single valid DOT diagram ready for rendering
+    """
 
 async def _generate_fallback_architecture(
     db: AsyncSession,
@@ -537,41 +549,59 @@ digraph Architecture {
 }
 """
 
-    # --- Render DOT -> PNG ---
+    # --- Render DOT → PNG & SVG ---
     tmp_base = tempfile.NamedTemporaryFile(delete=False, suffix=".dot").name
     try:
         graph = graphviz.Source(fallback_dot, engine="dot")
         graph.render(tmp_base, format="png", cleanup=True)
+        graph.render(tmp_base, format="svg", cleanup=True)
+
         png_path = tmp_base + ".png"
+        svg_path = tmp_base + ".svg"
     except Exception as e:
         logger.error(f" Fallback Graphviz rendering failed: {e}")
         return None, ""
 
-    # --- Upload to Azure Blob ---
-    blob_name = f"{blob_base_path}/architecture_fallback_{project.id}.png"
+    # --- Upload both files to Azure Blob ---
+    blob_name_png = f"{blob_base_path}/architecture_fallback_{project.id}.png"
+    blob_name_svg = f"{blob_base_path}/architecture_fallback_{project.id}.svg"
+
     try:
         with open(png_path, "rb") as fh:
-            png_bytes = fh.read()
-        await azure_blob.upload_bytes(png_bytes, blob_name)
+            await azure_blob.upload_bytes(fh.read(), blob_name_png)
+        with open(svg_path, "rb") as fh:
+            await azure_blob.upload_bytes(fh.read(), blob_name_svg)
     finally:
-        for path in [png_path, tmp_base]:
+        for path in [png_path, svg_path, tmp_base]:
             try:
                 os.remove(path)
             except FileNotFoundError:
                 pass
 
-    # --- Save record in DB ---
-    db_file = models.ProjectFile(
+    # --- Save both records in DB ---
+    db_file_png = models.ProjectFile(
         project_id=project.id,
         file_name="architecture.png",
-        file_path=blob_name,
+        file_path=blob_name_png,
     )
-    db.add(db_file)
-    await db.commit()
-    await db.refresh(db_file)
+    db_file_svg = models.ProjectFile(
+        project_id=project.id,
+        file_name="architecture.svg",
+        file_path=blob_name_svg,
+    )
 
-    logger.info(f" Default fallback architecture stored at {blob_name}")
-    return db_file, blob_name
+    db.add_all([db_file_png, db_file_svg])
+    await db.commit()
+    await db.refresh(db_file_png)
+    await db.refresh(db_file_svg)
+
+    logger.info(
+        f" Fallback architecture diagrams stored for project {project.id}: "
+        f"{blob_name_png}, {blob_name_svg}"
+    )
+
+    return db_file_png, blob_name_png
+
 
 
 async def generate_architecture(
@@ -588,7 +618,7 @@ async def generate_architecture(
     Includes retry logic, sanitization, validation, and fallback diagram.
     """
     if client is None or deployment is None:
-        logger.warning("⚠️ Azure OpenAI not configured — skipping architecture generation")
+        logger.warning(" Azure OpenAI not configured — skipping architecture generation")
         return None, ""
 
     prompt = _build_architecture_prompt(rfp_text, kb_chunks, project)
@@ -672,7 +702,7 @@ async def generate_architecture(
         png_path = tmp_base + ".png"
         svg_path = tmp_base + ".svg"
     except Exception as e:
-        logger.error(f"❌ Graphviz rendering failed: {e}\n--- DOT Snippet ---\n{dot_code[:800]}")
+        logger.error(f" Graphviz rendering failed: {e}\n--- DOT Snippet ---\n{dot_code[:800]}")
         return await _generate_fallback_architecture(db, project, blob_base_path)
 
     # ---------- Step 5: Upload PNG to Azure Blob ----------
@@ -706,34 +736,35 @@ async def generate_architecture(
             await db.delete(old_file)
             await db.commit()
         except Exception as e:
-            logger.warning(f"🟡 Failed to delete old architecture.png: {e}")
+            logger.warning(f" Failed to delete old architecture.png: {e}")
 
-    # ---------- Step 7: Save new ProjectFile record ----------
-    db_file = models.ProjectFile(
+    # ---------- Step 7: Save new ProjectFile records (PNG + SVG) ----------
+    db_file_png = models.ProjectFile(
         project_id=project.id,
         file_name="architecture.png",
         file_path=blob_name_png,
     )
-    db.add(db_file)
+    db_file_svg = models.ProjectFile(
+        project_id=project.id,
+        file_name="architecture.svg",
+        file_path=blob_name_svg,
+    )
+
+    db.add_all([db_file_png, db_file_svg])
     await db.commit()
-    await db.refresh(db_file)
+    await db.refresh(db_file_png)
+    await db.refresh(db_file_svg)
 
-    # ---------- Step 8: Log summary ----------
-    try:
-        node_count = len(re.findall(r"\[label=", dot_code))
-        cluster_count = len(re.findall(r"subgraph\s+cluster_", dot_code))
-        logger.info(
-            f"✅ Context-aware architecture diagram generated for project {project.id} "
-            f"→ {blob_name_png} (nodes={node_count}, clusters={cluster_count})"
-        )
-    except Exception:
-        logger.info(f"✅ Architecture diagram generated for project {project.id} → {blob_name_png}")
+    logger.info(
+        f" Architecture diagrams stored successfully for project {project.id}: "
+        f"{blob_name_png}, {blob_name_svg}"
+    )
 
-    return db_file, blob_name_png
+    return db_file_png, blob_name_png
+
 
 # --- Cleaner ---
-
-def clean_scope(data: Dict[str, Any], project=None) -> Dict[str, Any]:
+async def clean_scope(db: AsyncSession, data: Dict[str, Any], project=None) -> Dict[str, Any]:
     if not isinstance(data, dict):
         return {}
 
@@ -770,7 +801,7 @@ def clean_scope(data: Dict[str, Any], project=None) -> Dict[str, Any]:
         # Parse dependencies
         raw_deps = [d.strip() for d in str(a.get("Resources") or "").split(",") if d.strip()]
 
-        # 🚫 Remove owner from resources if duplicated
+        # Remove owner from resources if duplicated
         raw_deps = [r for r in raw_deps if r.lower() != owner.lower()]
 
         # Owner always included, then other resources
@@ -849,22 +880,36 @@ def clean_scope(data: Dict[str, Any], project=None) -> Dict[str, Any]:
                         role_month_usage[r] = {ml: 0.0 for ml in month_labels}
                     role_month_usage[r][f"Month {m_idx + 1}"] += overlap_days
 
-    # --- Convert days to effort (≥15 -> 1, 1–14 -> 0.5, else 0) ---
+    # --- Convert days to effort with 4-tier partial-month logic ---
     for r, months in role_month_usage.items():
         for m, days in months.items():
-            if days >= 15:
-                months[m] = 1
-            elif days > 1:
+            if days > 21:
+                months[m] = 1.0
+            elif 15 <= days <= 21:
+                months[m] = 0.75
+            elif 8 <= days < 15:
                 months[m] = 0.5
+            elif 1 <= days < 8:
+                months[m] = 0.25
             else:
-                months[m] = 0
+                months[m] = 0.0
+
+    try:
+        if db:
+            ROLE_RATE_MAP_DYNAMIC = await get_rate_map_for_project(db, project)
+        else:
+            ROLE_RATE_MAP_DYNAMIC = ROLE_RATE_MAP
+    except Exception as e:
+        logger.warning(f"Rate map fallback due to error: {e}")
+        ROLE_RATE_MAP_DYNAMIC = ROLE_RATE_MAP
+
 
     # --- Build final resourcing plan ---
     resourcing_plan = []
     for idx, role in enumerate(role_order, start=1):
         month_efforts = role_month_usage.get(role, {m: 0 for m in month_labels})
         total_effort = sum(month_efforts.values())
-        rate = ROLE_RATE_MAP.get(role, 2000.0)
+        rate = ROLE_RATE_MAP_DYNAMIC.get(role, ROLE_RATE_MAP.get(role, 2000.0))
         cost = round(total_effort * rate, 2)
         plan_entry = {
             "ID": idx,
@@ -889,6 +934,14 @@ def clean_scope(data: Dict[str, Any], project=None) -> Dict[str, Any]:
         "Duration": duration,
         "Generated At": datetime.now(ist).strftime("%Y-%m-%d %H:%M %Z"),
     }
+    try:
+        if getattr(project, "company", None):
+            data["overview"]["Currency"] = getattr(project.company, "currency", "USD")
+        else:
+            data["overview"]["Currency"] = "USD"
+    except Exception:
+        data["overview"]["Currency"] = "USD"
+
 
     data["activities"] = activities
     data["resourcing_plan"] = resourcing_plan
@@ -899,6 +952,16 @@ async def generate_project_scope(db: AsyncSession, project) -> dict:
     """
     Generate project scope + architecture diagram + store architecture in DB + return combined JSON.
     """
+
+    # ✅ Ensure the project has a valid company reference (fallback to Sigmoid)
+    if not getattr(project, "company_id", None):
+        from app.utils import ratecards
+        sigmoid = await ratecards.get_or_create_sigmoid_company(db)
+        project.company_id = sigmoid.id
+        await db.commit()
+        await db.refresh(project)
+        logger.info(f"🔗 Linked project {project.id} to Sigmoid company as fallback")
+
     if client is None or deployment is None:
         logger.warning("Azure OpenAI not configured")
         return {}
@@ -922,7 +985,7 @@ async def generate_project_scope(db: AsyncSession, project) -> dict:
         if files:
             rfp_text = await _extract_text_from_files(files)
     except Exception as e:
-        logger.warning(f"File extraction for project {getattr(project, 'id', None)}")
+        logger.warning(f"File extraction for project {getattr(project, 'id', None)} failed: {e}")
 
     # ---------- Trim RFP text ----------
     rfp_tokens = tokenizer.encode(rfp_text or "")
@@ -981,7 +1044,7 @@ async def generate_project_scope(db: AsyncSession, project) -> dict:
     prompt = _build_scope_prompt(rfp_text, kb_chunks, project, model_name=model_name)
 
     try:
-        # Step 1: Generate scope
+        # Step 1: Generate scope via Azure OpenAI
         resp = await anyio.to_thread.run_sync(
             lambda: client.chat.completions.create(
                 model=deployment,
@@ -990,7 +1053,25 @@ async def generate_project_scope(db: AsyncSession, project) -> dict:
             )
         )
         raw = _extract_json(resp.choices[0].message.content.strip())
-        cleaned_scope = clean_scope(raw, project=project)
+        cleaned_scope = await clean_scope(db, raw, project=project)
+        # Update project fields from generated overview (just like finalize_scope)
+        overview = cleaned_scope.get("overview", {})
+        if overview:
+            project.name = overview.get("Project Name") or project.name
+            project.domain = overview.get("Domain") or project.domain
+            project.complexity = overview.get("Complexity") or project.complexity
+            project.tech_stack = overview.get("Tech Stack") or project.tech_stack
+            project.use_cases = overview.get("Use Cases") or project.use_cases
+            project.compliance = overview.get("Compliance") or project.compliance
+            project.duration = str(overview.get("Duration") or project.duration)
+
+            try:
+                await db.commit()
+                await db.refresh(project)
+                logger.info(f" Project metadata updated from generated scope for project {project.id}")
+            except Exception as e:
+                logger.warning(f" Failed to update project metadata: {e}")
+
 
         # Step 2: Generate + store architecture diagram
         try:
@@ -1003,11 +1084,48 @@ async def generate_project_scope(db: AsyncSession, project) -> dict:
             logger.warning(f"Architecture diagram generation failed: {e}")
             cleaned_scope["architecture_diagram"] = None
 
+        # Step 3: Auto-save finalized_scope.json in Azure Blob + DB
+        try:
+            from sqlalchemy import select
+            result = await db.execute(
+                select(models.ProjectFile).filter(
+                    models.ProjectFile.project_id == project.id,
+                    models.ProjectFile.file_name == "finalized_scope.json",
+                )
+            )
+            old_file = result.scalars().first()
+            if old_file:
+                try:
+                    await db.delete(old_file)
+                    await db.commit()
+                except Exception as e:
+                    logger.warning(f"Failed to delete old finalized_scope.json: {e}")
+
+            blob_name = f"{PROJECTS_BASE}/{project.id}/finalized_scope.json"
+            await azure_blob.upload_bytes(
+                json.dumps(cleaned_scope, ensure_ascii=False, indent=2).encode("utf-8"),
+                blob_name,
+            )
+
+            db_file = models.ProjectFile(
+                project_id=project.id,
+                file_name="finalized_scope.json",
+                file_path=blob_name,
+            )
+            db.add(db_file)
+            await db.commit()
+            await db.refresh(db_file)
+
+            logger.info(f" Auto-saved finalized_scope.json for project {project.id}")
+        except Exception as e:
+            logger.warning(f" Failed to auto-save finalized_scope.json: {e}")
         return cleaned_scope
 
     except Exception as e:
         logger.error(f"Azure OpenAI scope generation failed: {e}")
         return {}
+
+
 
 
 
@@ -1017,11 +1135,12 @@ async def regenerate_from_instructions(draft: dict, instructions: str) -> dict:
     If no instructions → just clean the draft.
     """
     if not instructions or not instructions.strip():
-        return clean_scope(draft)
+        return await clean_scope(None, draft)
+
 
     if client is None or deployment is None:
         logger.warning("Azure OpenAI not configured")
-        return clean_scope(draft)
+        return await clean_scope(None, draft)
 
     prompt = f"""
 You are a project scoping assistant.
@@ -1051,11 +1170,11 @@ Return ONLY valid JSON.
 
         raw_text = resp.choices[0].message.content.strip()
         updated = _extract_json(raw_text)
-        return clean_scope(updated)
+        return  await clean_scope(None, updated)
 
     except Exception as e:
         logger.error(f"Regeneration failed: {e}")
-        return clean_scope(draft)
+        return await clean_scope(None, draft)
 
 
 async def finalize_scope(
@@ -1067,11 +1186,20 @@ async def finalize_scope(
     Clean and finalize scope JSON, update project metadata, and store finalized_scope.json in blob.
     """
 
-    logger.info(f"📌 Finalizing scope (engine) for project {project_id}...")
+    logger.info(f" Finalizing scope (engine) for project {project_id}...")
 
-    #  Clean the draft
-    cleaned = clean_scope(scope_data)
+    # ---- Load project with company ----
+    result = await db.execute(
+        select(models.Project)
+        .options(selectinload(models.Project.company))
+        .filter(models.Project.id == project_id)
+    )
+    project = result.scalars().first()
+
+    # ---- Clean the draft using project context ----
+    cleaned = await clean_scope(db, scope_data, project=project)
     overview = cleaned.get("overview", {})
+
 
     # ---- Update project metadata ----
     result = await db.execute(
@@ -1102,7 +1230,6 @@ async def finalize_scope(
     old_file = result.scalars().first()
     if old_file:
         try:
-            await azure_blob.delete_blob(old_file.file_path)
             await db.delete(old_file)
             await db.commit()
         except Exception as e:

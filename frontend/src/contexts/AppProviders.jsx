@@ -3,6 +3,7 @@ import { AuthProvider } from "./AuthContext";
 import { ProjectProvider } from "./ProjectContext";
 import { ExportProvider } from "./ExportContext";
 import { BlobProvider } from "./BlobContext";
+import { RateCardProvider } from "./RateCardContext";
 import { ToastContainer } from "react-toastify";
 import { ErrorBoundary } from "react-error-boundary";
 import "react-toastify/dist/ReactToastify.css";
@@ -63,21 +64,23 @@ export default function AppProviders({ children }) {
       <ProjectProvider>
         <ExportProvider>
           <BlobProvider>
-            <ErrorBoundary FallbackComponent={ErrorFallback}>
-              {children}
-              <ToastContainer
-                containerId="root-toaster"
-                position="top-right"
-                autoClose={3000}
-                newestOnTop
-                closeOnClick
-                pauseOnFocusLoss={false}
-                draggable
-                pauseOnHover
-                limit={3}
-                theme={toastTheme}
-              />
-            </ErrorBoundary>
+            <RateCardProvider>  
+              <ErrorBoundary FallbackComponent={ErrorFallback}>
+                {children}
+                <ToastContainer
+                  containerId="root-toaster"
+                  position="top-right"
+                  autoClose={3000}
+                  newestOnTop
+                  closeOnClick
+                  pauseOnFocusLoss={false}
+                  draggable
+                  pauseOnHover
+                  limit={3}
+                  theme={toastTheme}
+                />
+              </ErrorBoundary>
+            </RateCardProvider>
           </BlobProvider>
         </ExportProvider>
       </ProjectProvider>

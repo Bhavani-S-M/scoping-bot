@@ -18,6 +18,8 @@ const ResendVerification = lazy(() => import("./pages/ResendVerification"));
 const ProjectsHistory = lazy(() => import("./pages/ProjectsHistory"));
 const Profile = lazy(() => import("./pages/Profile"));
 const BlobDashboard = lazy(() => import("./pages/BlobDashboard")); 
+const RateCards = lazy(() => import("./pages/RateCards")); 
+
 
 export default function App() {
   const location = useLocation();
@@ -85,6 +87,14 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <ProjectsHistory />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/ratecards"
+            element={
+              <ProtectedRoute>
+                <RateCards />
               </ProtectedRoute>
             }
           />

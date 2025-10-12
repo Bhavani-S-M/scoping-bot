@@ -18,24 +18,18 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # ----------------------
-      # Checkout Code
-      # ----------------------
+      # Checkout
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ----------------------
       # Login to DockerHub
-      # ----------------------
       - name: Login to DockerHub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # ----------------------
       # Build & Push Backend
-      # ----------------------
       - name: Build backend image
         run: |
           docker build \
@@ -49,9 +43,7 @@ jobs:
           docker push $BACKEND_IMAGE:latest
           docker push $BACKEND_IMAGE:v${{ github.run_number }}
 
-      # ----------------------
       # Build & Push Frontend
-      # ----------------------
       - name: Build frontend image
         run: |
           docker build \
@@ -65,9 +57,7 @@ jobs:
           docker push $FRONTEND_IMAGE:latest
           docker push $FRONTEND_IMAGE:v${{ github.run_number }}
 
-      # ----------------------
       # Azure Login & AKS Context
-      # ----------------------
       - name: Azure Login
         uses: azure/login@v2
         with:
@@ -79,22 +69,16 @@ jobs:
           resource-group: ${{ secrets.AKS_RESOURCE_GROUP }}
           cluster-name: ${{ secrets.AKS_CLUSTER_NAME }}
 
-      # ----------------------
       # Helm Installation
-      # ----------------------
       - name: Install Helm
         uses: azure/setup-helm@v4
 
-      # ----------------------
       # Create Namespace (if not exists)
-      # ----------------------
       - name: Apply namespace
         run: |
           kubectl apply -f $HELM_DIR/namespace.yaml || true
 
-      # ----------------------
       # Apply Secrets (optional)
-      # ----------------------
       - name: Apply secrets
         run: |
           if [ -f "$HELM_DIR/secrets.yaml" ]; then
@@ -103,7 +87,6 @@ jobs:
             echo "No secrets.yaml found — skipping"
           fi
 
-      # ----------------------
       # Deploy Backend via Helm
       - name: Deploy backend via Helm
         run: |
@@ -114,9 +97,7 @@ jobs:
             --set appVersion=v${{ github.run_number }} \
             --values $HELM_DIR/secrets.yaml || true
 
-      # ----------------------
       # Deploy Frontend via Helm
-      # ----------------------
       - name: Deploy frontend via Helm
         run: |
           helm upgrade --install frontend $HELM_DIR/scopbot-frontend \

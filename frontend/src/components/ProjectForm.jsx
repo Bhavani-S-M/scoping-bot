@@ -1,12 +1,27 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useProjects } from "../contexts/ProjectContext";
+import { useRateCards } from "../contexts/RateCardContext";
+
 import { File, Trash2, Upload } from "lucide-react";
 import { toast } from "react-toastify";
 
 export default function ProjectForm({ onSubmit }) {
   const navigate = useNavigate();
   const { createProject } = useProjects();
+  const { companies, selectedCompany, setSelectedCompany, loadCompanies } = useRateCards();
+
+  useEffect(() => {
+    loadCompanies();
+  }, [loadCompanies]);
+
+  useEffect(() => {
+    if (!selectedCompany && companies.length > 0) {
+      const sigmoid = companies.find((c) => c.name === "Sigmoid");
+      if (sigmoid) setSelectedCompany(sigmoid.id);
+    }
+  }, [companies, selectedCompany, setSelectedCompany]);
+
 
   // Domain Options
   const DOMAIN_OPTIONS = [
@@ -229,10 +244,9 @@ export default function ProjectForm({ onSubmit }) {
 
     setLoading(true);
     try {
-      const payload = { ...form };
+      const payload = { ...form, company_id: selectedCompany || undefined };
       const { projectId, scope, redirectUrl } = await createProject(payload);
 
-      toast.success(` Project "${form.name || "Untitled"}" created successfully!`);
       if (onSubmit) onSubmit({ project_id: projectId, scope, redirect_url: redirectUrl });
 
       if (scope) {
@@ -507,6 +521,23 @@ export default function ProjectForm({ onSubmit }) {
           )}
         </div>
       </div>
+      {/* Company Selector */}
+      <div>
+        <label className="block font-medium mb-1 text-gray-700 dark:text-gray-200">Company</label>
+        <select
+          value={selectedCompany || ""}
+          onChange={(e) => setSelectedCompany(e.target.value)}
+          className="border rounded-lg px-3 py-2 w-full bg-white dark:bg-dark-card focus:ring-primary"
+        >
+          <option value="" disabled>Select a company</option>
+          {companies.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name === "Sigmoid" ? "Sigmoid (Standard Rate Cards)" : c.name}
+            </option>
+          ))}
+        </select>
+      </div>
+
       
 
       {/* File Upload */}

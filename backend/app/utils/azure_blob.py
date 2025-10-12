@@ -1,5 +1,6 @@
 # app/utils/azure_blob.py
 from typing import List, Dict, Union
+import anyio
 from azure.storage.blob.aio import BlobServiceClient, ContainerClient
 from azure.storage.blob import generate_container_sas, ContainerSasPermissions
 from azure.core.exceptions import ResourceExistsError
@@ -109,23 +110,105 @@ async def explorer(base: str) -> Dict:
     return {"base": base, "children": await build_tree(base)}
 
 
-# Delete
+# DELETE
+import asyncio
+from azure.core.exceptions import ResourceNotFoundError
+
 async def delete_blob(blob_name: str, base: str = "") -> bool:
+    """Delete a single blob safely."""
     path = _normalize_path(blob_name, base)
     blob = container.get_blob_client(path)
-    await blob.delete_blob()
-    return True
+    try:
+        await blob.delete_blob()
+        print(f" Deleted blob: {path}")
+        return True
+    except ResourceNotFoundError:
+        print(f" Blob already deleted: {path}")
+        return False
+    except Exception as e:
+        print(f" Failed to delete blob {path}: {e}")
+        return False
 
 async def delete_folder(prefix: str, base: str = "") -> List[str]:
+    """
+    Delete all blobs under a folder prefix like 'projects/<id>/' concurrently for speed.
+    This version correctly uses blob clients (no NoneType await issue).
+    """
     path = _normalize_path(prefix, base)
-    if path and not path.endswith("/"):
+    if not path.endswith("/"):
         path += "/"
 
-    deleted: List[str] = []
-    async for blob in container.list_blobs(name_starts_with=path):
-        await container.delete_blob(blob.name)
-        deleted.append(blob.name)
+    deleted = []
+
+    async def _delete_single(blob_name: str):
+        try:
+            blob_client = container.get_blob_client(blob_name)
+            await blob_client.delete_blob()
+            deleted.append(blob_name)
+        except ResourceNotFoundError:
+            pass
+        except Exception as e:
+            print(f" Failed to delete {blob_name}: {e}")
+
+    try:
+        tasks = []
+        async for blob in container.list_blobs(name_starts_with=path):
+            tasks.append(_delete_single(blob.name))
+        if tasks:
+            await asyncio.gather(*tasks)
+        print(f"Deleted {len(deleted)} blobs under {path}")
+    except Exception as e:
+        print(f"delete_folder failed for {path}: {e}")
     return deleted
+
+
+
+async def delete_blob_async(blob_path: str) -> bool:
+    """
+    Delete a single blob or an entire folder recursively.
+    Safe to call from any async context.
+    """
+    try:
+        # Folder delete
+        if blob_path.endswith("/") or "." not in blob_path:
+            print(f"🧹 Deleting folder recursively: {blob_path}")
+            await delete_folder(blob_path)
+            return True
+        # Single file delete
+        return await delete_blob(blob_path)
+    except Exception as e:
+        print(f" Failed async delete for {blob_path}: {e}")
+        return False
+
+
+def delete_blob_sync(blob_path: str):
+    """
+    Full synchronous safe wrapper for delete_blob_async().
+    Works in or outside an existing asyncio event loop.
+    Used by cleanup tasks in non-async contexts.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+        future = asyncio.run_coroutine_threadsafe(delete_blob_async(blob_path), loop)
+        return future.result()
+    except RuntimeError:
+        return asyncio.run(delete_blob_async(blob_path))
+    except Exception as e:
+        print(f"⚠️ delete_blob_sync failed for {blob_path}: {e}")
+        return False
+
+
+def safe_delete_blob(blob_path: str):
+    """
+    Non-blocking helper for fire-and-forget cleanup tasks.
+    If inside an active loop → schedules background task.
+    If outside → runs synchronously.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(delete_blob_async(blob_path))
+    except RuntimeError:
+        asyncio.run(delete_blob_async(blob_path))
 
 
 # Existence & URL

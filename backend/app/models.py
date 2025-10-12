@@ -1,14 +1,17 @@
 import uuid
 import datetime
-from sqlalchemy import String, Text, DateTime, ForeignKey
+from sqlalchemy import (
+    String, Text, DateTime, ForeignKey, Float, event
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 from sqlalchemy.sql import func
 from fastapi_users.db import SQLAlchemyBaseUserTableUUID
 from app.config.database import Base
+from app.utils import azure_blob
 
 
-# User
+# USER MODEL
 class User(SQLAlchemyBaseUserTableUUID, Base):
     __tablename__ = "users"
 
@@ -22,15 +25,84 @@ class User(SQLAlchemyBaseUserTableUUID, Base):
         DateTime(timezone=True), onupdate=func.now()
     )
 
+    # Relationships
     projects: Mapped[list["Project"]] = relationship(
         "Project", back_populates="owner", cascade="all, delete-orphan"
+    )
+    rate_cards: Mapped[list["RateCard"]] = relationship(
+        "RateCard", back_populates="user", cascade="all, delete-orphan"
+    )
+    companies: Mapped[list["Company"]] = relationship(
+        "Company", back_populates="owner", cascade="all, delete-orphan"
     )
 
     def __repr__(self):
         return f"<User(id={str(self.id)[:8]}, username={self.username})>"
 
 
-#  Project
+# COMPANY MODEL
+class Company(Base):
+    __tablename__ = "companies"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True
+    )
+    name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    currency: Mapped[str] = mapped_column(String(10), default="USD")
+
+    owner_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"), 
+        nullable=True,
+        index=True
+    )
+    owner: Mapped["User"] = relationship("User", back_populates="companies")
+
+    # Relationships
+    rate_cards: Mapped[list["RateCard"]] = relationship(
+        "RateCard", back_populates="company", cascade="all, delete-orphan"
+    )
+    projects: Mapped[list["Project"]] = relationship(
+        "Project", back_populates="company"
+    )
+
+    def __repr__(self):
+        return f"<Company(name={self.name}, owner={str(self.owner_id)[:8]}, currency={self.currency})>"
+
+# RATE CARD MODEL
+class RateCard(Base):
+    __tablename__ = "rate_cards"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True
+    )
+
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("companies.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True
+    )
+
+    role_name: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    monthly_rate: Mapped[float] = mapped_column(Float, nullable=False)
+
+    # Relationships
+    company: Mapped["Company"] = relationship("Company", back_populates="rate_cards")
+    user: Mapped["User"] = relationship("User", back_populates="rate_cards")
+
+    def __repr__(self):
+        who = f"user={self.user_id}" if self.user_id else "default"
+        return f"<RateCard({who}, company={self.company_id}, role={self.role_name}, rate={self.monthly_rate})>"
+
+
+# PROJECT MODEL
 class Project(Base):
     __tablename__ = "projects"
 
@@ -39,13 +111,13 @@ class Project(Base):
     )
 
     # Core fields
-    name: Mapped[str | None] = mapped_column(String, index=True, nullable=True)    
-    domain: Mapped[str | None] = mapped_column(String, nullable=True)              
-    complexity: Mapped[str | None] = mapped_column(String, nullable=True)
+    name: Mapped[str | None] = mapped_column(String(150), index=True, nullable=True)
+    domain: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    complexity: Mapped[str | None] = mapped_column(String(50), nullable=True)
     tech_stack: Mapped[str | None] = mapped_column(Text, nullable=True)
     use_cases: Mapped[str | None] = mapped_column(Text, nullable=True)
     compliance: Mapped[str | None] = mapped_column(Text, nullable=True)
-    duration: Mapped[str | None] = mapped_column(String, nullable=True)
+    duration: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     # Audit
     created_at: Mapped[datetime.datetime] = mapped_column(
@@ -57,9 +129,19 @@ class Project(Base):
 
     # Owner
     owner_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False
     )
     owner: Mapped["User"] = relationship("User", back_populates="projects")
+
+    # Company association
+    company_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("companies.id", ondelete="SET NULL"),
+        nullable=True
+    )
+    company: Mapped["Company"] = relationship("Company", back_populates="projects")
 
     # Related uploaded files
     files: Mapped[list["ProjectFile"]] = relationship(
@@ -67,23 +149,26 @@ class Project(Base):
     )
 
     def __repr__(self):
-        return f"<Project(id={str(self.id)[:8]}, name={self.name[:20]})>"
+        return f"<Project(id={str(self.id)[:8]}, name={self.name[:25] if self.name else None})>"
 
-# ProjectFile
+
+# PROJECT FILE MODEL
 class ProjectFile(Base):
     __tablename__ = "project_files"
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True
     )
-    file_name: Mapped[str] = mapped_column(String, nullable=False)
+    file_name: Mapped[str] = mapped_column(String(255), nullable=False)
     file_path: Mapped[str] = mapped_column(Text, nullable=False)
     uploaded_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
 
     project_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), index=True
+        UUID(as_uuid=True),
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        index=True
     )
     project: Mapped["Project"] = relationship("Project", back_populates="files")
 
@@ -92,10 +177,40 @@ class ProjectFile(Base):
         """Return public blob URL for this file."""
         from app.utils.azure_blob import get_blob_url
         try:
-            return get_blob_url(self.file_path) 
+            return get_blob_url(self.file_path)
         except Exception:
             return None
 
     def __repr__(self):
         return f"<ProjectFile(id={str(self.id)[:8]}, name={self.file_name})>"
 
+@event.listens_for(Project, "after_delete")
+def delete_project_folder(mapper, connection, target):
+    """Delete all blobs under the project's folder."""
+    try:
+        from app.utils import azure_blob
+        prefix = f"projects/{target.id}/"
+        print(f" [Project] Triggering Azure Blob cleanup for folder: {prefix}")
+
+        # Fire-and-forget cleanup
+        azure_blob.safe_delete_blob(prefix)
+
+        # Mark this project as cleaned to avoid duplicate file deletions
+        setattr(target, "_blob_folder_deleted", True)
+
+    except Exception as e:
+        print(f" [Project] Failed to cleanup folder {prefix}: {e}")
+
+
+@event.listens_for(ProjectFile, "after_delete")
+def delete_blob_after_file_delete(mapper, connection, target):
+    """Delete individual blob file unless folder cleanup already triggered."""
+    try:
+        if getattr(getattr(target, "project", None), "_blob_folder_deleted", False):
+            return  # Folder deletion will handle this
+        if target.file_path:
+            from app.utils import azure_blob
+            azure_blob.safe_delete_blob(target.file_path)
+            print(f" [File] Deleted blob: {target.file_path}")
+    except Exception as e:
+        print(f" [File] Failed to delete blob {getattr(target, 'file_path', None)}: {e}")

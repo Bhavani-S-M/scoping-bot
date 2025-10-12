@@ -7,7 +7,7 @@ from app.config import config
 from app.config.database import async_engine, Base 
 from app import models
 from app.auth import router as auth_router
-from app.routers import projects, exports, blob
+from app.routers import projects, exports, blob, ratecards
 from app.utils import azure_blob
 
 # ---------- App Init ----------
@@ -49,4 +49,4 @@ app.include_router(auth_router)
 app.include_router(projects.router)
 app.include_router(exports.router)
 app.include_router(blob.router)
-
+app.include_router(ratecards.router)

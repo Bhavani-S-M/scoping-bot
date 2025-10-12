@@ -176,20 +176,22 @@ export default function Dashboard() {
                 >
                   <td className="px-4 py-2 font-semibold">
                     <Link
-                      to={`/projects/${p.id}`}
+                      to={`/exports/${p.id}?mode=draft`}
                       className="text-primary hover:underline"
                     >
                       {p.name}
                     </Link>
                   </td>
-                  <td className="px-4 py-2 text-gray-500 dark:text-gray-400">{p.domain || "-"}</td>
+                  <td className="px-4 py-2 text-gray-500 dark:text-gray-400">
+                    {p.domain || "-"}
+                  </td>
                   <td className="px-4 py-2 text-gray-500 dark:text-gray-400">
                     {new Date(p.created_at).toLocaleDateString()}
                   </td>
                   <td className="px-4 py-2 flex items-center gap-3 justify-end">
                     <Link
-                      to={`/projects/${p.id}`}
-                      className="flex items-center gap-1 text-gray-600 hover:text-gray-800 dark:text-gray-300 dark:hover:text-gray-100 transition"
+                      to={`/exports/${p.id}?mode=draft`}
+                      className="flex items-center gap-1 text-primary hover:underline"
                     >
                       <Eye className="w-5 h-5" />
                       View
@@ -204,6 +206,7 @@ export default function Dashboard() {
                   </td>
                 </tr>
               ))}
+
             </tbody>
           </table>
         )}

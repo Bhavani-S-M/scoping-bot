@@ -18,10 +18,6 @@ export const ProjectProvider = ({ children }) => {
   const [lastPreviewScope, setLastPreviewScope] = useState(null);
   const [lastRedirectUrl, setLastRedirectUrl] = useState(null);
 
-  // -------------------------
-  // Project CRUD
-  // -------------------------
-
   const fetchProjects = async () => {
     try {
       setLoading(true);
@@ -29,7 +25,7 @@ export const ProjectProvider = ({ children }) => {
       setProjects(res.data || []);
       setError(null);
     } catch (err) {
-      console.error("❌ Failed to fetch projects:", err);
+      console.error(" Failed to fetch projects:", err);
       setError("Failed to fetch projects");
     } finally {
       setLoading(false);
@@ -41,34 +37,40 @@ export const ProjectProvider = ({ children }) => {
       const res = await projectApi.getProject(id);
       return res.data;
     } catch (err) {
-      console.error(`❌ Failed to fetch project ${id}:`, err);
+      console.error(` Failed to fetch project ${id}:`, err);
       throw err;
     }
   };
 
+  /**
+   * Create a new project and immediately generate its scope + previews.
+   * Supports company_id (for ratecards context)
+   */
   const createProject = async (data) => {
     try {
-      // 1️⃣ Create project
+      //  1. Create project (includes company_id if present)
       const res = await projectApi.createProject(data);
       const projectId = res.data.id;
 
-      // 2️⃣ Generate scope
+      //  2. Generate scope
       const genRes = await projectApi.generateScope(projectId);
       const scope = genRes.data;
 
-      // 3️⃣ Generate previews
+      //  3. Generate export previews (JSON, Excel, PDF)
       const [jsonPreview, excelPreview, pdfPreview] = await Promise.all([
         exportApi.previewJson(projectId, scope),
         exportApi.previewExcel(projectId, scope),
         exportApi.previewPdf(projectId, scope),
       ]);
 
-      // 4️⃣ Refresh project from backend
+      //  4. Refresh full project details (to include company & files)
       const fullProject = await getProjectById(projectId);
       setProjects((prev) => [fullProject, ...removeById(prev, projectId)]);
 
+      //  5. Cache last preview and redirect path
       setLastPreviewScope(jsonPreview || scope);
       setLastRedirectUrl(`/exports/${projectId}`);
+      localStorage.setItem("lastProjectId", projectId);
 
       return {
         projectId,
@@ -77,7 +79,7 @@ export const ProjectProvider = ({ children }) => {
         previews: { jsonPreview, excelPreview, pdfPreview },
       };
     } catch (err) {
-      console.error("❌ Failed to create project:", err);
+      console.error(" Failed to create project:", err);
       throw err;
     }
   };
@@ -92,7 +94,7 @@ export const ProjectProvider = ({ children }) => {
       return res.data;
     } catch (err) {
       setProjects(prev);
-      console.error(`❌ Failed to update project ${id}:`, err);
+      console.error(` Failed to update project ${id}:`, err);
       throw err;
     }
   };
@@ -105,7 +107,7 @@ export const ProjectProvider = ({ children }) => {
       await projectApi.deleteProject(id);
     } catch (err) {
       setProjects(prev);
-      console.error(`❌ Failed to delete project ${id}:`, err);
+      console.error(` Failed to delete project ${id}:`, err);
       throw err;
     }
   };
@@ -117,14 +119,10 @@ export const ProjectProvider = ({ children }) => {
       await projectApi.deleteAllProjects();
     } catch (err) {
       setProjects(prev);
-      console.error("❌ Failed to delete all projects:", err);
+      console.error(" Failed to delete all projects:", err);
       throw err;
     }
   };
-
-  // -------------------------
-  // Scope Handling
-  // -------------------------
 
   const regenerateScope = async (id, draftScope = null) => {
     try {
@@ -146,22 +144,22 @@ export const ProjectProvider = ({ children }) => {
       setLastPreviewScope(jsonPreview || null);
       return jsonPreview;
     } catch (err) {
-      console.error(`❌ Failed to regenerate scope for ${id}:`, err);
+      console.error(` Failed to regenerate scope for ${id}:`, err);
       throw err;
     }
   };
 
   const finalizeScope = async (id, scopeData) => {
     try {
-      // 1️⃣ Finalize on backend
+      //  1. Finalize on backend
       const res = await projectApi.finalizeScope(id, scopeData);
       const finalizedScope = res.data?.scope || scopeData;
 
-      // 2️⃣ Refresh project
+      //  2. Refresh project list
       const fullProject = await getProjectById(id);
       setProjects((cur) => replaceById(cur, id, fullProject));
 
-      // 3️⃣ Regenerate previews immediately
+      //  3. Regenerate previews
       const [jsonPreview, excelPreview, pdfPreview] = await Promise.all([
         exportApi.previewJson(id, finalizedScope),
         exportApi.previewExcel(id, finalizedScope),
@@ -171,31 +169,26 @@ export const ProjectProvider = ({ children }) => {
       setLastPreviewScope(jsonPreview || finalizedScope);
       setLastRedirectUrl(`/exports/${id}`);
 
-      return { scope: finalizedScope, previews: { jsonPreview, excelPreview, pdfPreview } };
+      return {
+        scope: finalizedScope,
+        previews: { jsonPreview, excelPreview, pdfPreview },
+      };
     } catch (err) {
-      console.error(`❌ Failed to finalize scope for ${id}:`, err);
+      console.error(` Failed to finalize scope for ${id}:`, err);
       throw err;
     }
   };
 
-  // ✅ Updated getFinalizedScope
   const getFinalizedScope = async (id) => {
     try {
       const res = await projectApi.getFinalizedScope(id);
-      // Backend returns `null` if not finalized yet
-      if (!res.data) return null;  
-      return res.data;
+      return res.data || null; // Backend returns `null` if not finalized
     } catch (err) {
-      console.error(`❌ Failed to fetch finalized scope for ${id}:`, err);
+      console.error(` Failed to fetch finalized scope for ${id}:`, err);
       throw err;
     }
   };
 
-
-
-  // -------------------------
-  // Context Value
-  // -------------------------
   return (
     <ProjectContext.Provider
       value={{
@@ -206,13 +199,13 @@ export const ProjectProvider = ({ children }) => {
         lastRedirectUrl,
         fetchProjects,
         getProjectById,
-        createProject,
+        createProject, 
         updateProject,
         deleteProject,
         deleteAllProjects,
         regenerateScope,
         finalizeScope,
-        getFinalizedScope, // ✅ expose it here
+        getFinalizedScope,
         setLastPreviewScope,
         setLastRedirectUrl,
       }}

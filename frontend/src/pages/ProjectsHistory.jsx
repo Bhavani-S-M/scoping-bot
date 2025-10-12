@@ -187,7 +187,7 @@ export default function ProjectsHistory() {
                   >
                     <td className="px-4 py-2 font-semibold text-gray-800 dark:text-gray-100">
                       <Link
-                        to={`/projects/${p.id}`}
+                        to={`/exports/${p.id}?mode=draft`}
                         className="text-primary hover:underline"
                       >
                         {p.name}
@@ -204,7 +204,7 @@ export default function ProjectsHistory() {
                     </td>
                     <td className="px-4 py-2 flex justify-end gap-3">
                       <Link
-                        to={`/projects/${p.id}`}
+                        to={`/exports/${p.id}?mode=draft`}
                         className="flex items-center gap-1 text-primary hover:underline"
                       >
                         <Eye className="w-5 h-5" /> View

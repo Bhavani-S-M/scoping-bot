@@ -3,10 +3,10 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import { useProjects } from "../contexts/ProjectContext";
 import { useExport } from "../contexts/ExportContext";
 
+
 import projectApi from "../api/projectApi";
 import exportApi, { safeFileName } from "../api/exportApi";
 import {
-  ArrowLeft,
   FileSpreadsheet,
   FileText,
   FileJson,
@@ -16,6 +16,7 @@ import {
   Download,
   Package,
   XCircle,
+  Trash2,
 } from "lucide-react";
 import { Document, Page, pdfjs } from "react-pdf";
 import "react-pdf/dist/Page/AnnotationLayer.css";
@@ -34,20 +35,22 @@ const TABS = [
   { key: "pdf", label: "PDF", icon: FileText },
 ];
 
-const formatCurrency = (v) => {
+const formatCurrency = (v, currency = "USD") => {
   if (v == null || v === "") return "";
   const n = Number(v);
   if (isNaN(n)) return v;
   return n.toLocaleString("en-US", {
     style: "currency",
-    currency: "USD",
+    currency,
     minimumFractionDigits: 2,
   });
 };
 
+
 export default function Exports() {
   const { id } = useParams();
   const location = useLocation();
+  const mode = new URLSearchParams(location.search).get("mode");
   const { finalizeScope, getFinalizedScope } = useProjects();
   const { previewPdf, getPdfBlob, regenerateScope } = useExport();
   const [finalizing, setFinalizing] = useState(false);
@@ -70,9 +73,17 @@ export default function Exports() {
 
   const [project, setProject] = useState(null);
   const [activeTab, setActiveTab] = useState("json");
+  const activeCurrency = useMemo(() => {
+    return (
+      project?.company?.currency ||
+      parsedDraft?.overview?.Currency ||
+      parsedDraft?.overview?.currency ||
+      "USD"
+    );
+  }, [project, parsedDraft]);
+
   const [loading, setLoading] = useState(false);
   const [isFinalized, setIsFinalized] = useState(false);
-  const [justFinalized, setJustFinalized] = useState(false);
 
   const [showSuccessBanner, setShowSuccessBanner] = useState(false);
 
@@ -101,15 +112,14 @@ export default function Exports() {
     // Auto grow & shrink
     const el = textareaRef.current;
     if (el) {
-      el.style.height = "auto"; // reset to shrink
-      el.style.height = `${el.scrollHeight}px`; // expand to fit
+      el.style.height = "auto"; 
+      el.style.height = `${el.scrollHeight}px`; 
     }
   };
   const updateParsedDraft = (section, newRows) => {
     if (!parsedDraft) return;
 
     if (section === "overview") {
-      // turn rows [["Domain","Fintech"],...] back into object
       const newOverview = {};
       newRows.forEach(([k, v]) => {
         if (k) newOverview[k] = v;
@@ -117,7 +127,6 @@ export default function Exports() {
       const newDraft = { ...parsedDraft, overview: newOverview };
       setJsonText(JSON.stringify(newDraft, null, 2));
     } else {
-      // normal array section
       const headers = excelPreview.headers;
       const arr = newRows.map((row) =>
         headers.reduce((obj, h, idx) => {
@@ -136,13 +145,13 @@ export default function Exports() {
     try {
       setRegenLoading(true);
 
-      // ✅Correct usage: pass id, draft, and instructions separately
+      // Correct usage: pass id, draft, and instructions separately
       const updated = await regenerateScope(id, parsedDraft, regenPrompt);
 
       setJsonText(JSON.stringify(updated, null, 2));
       setIsFinalized(false);
 
-      setRegenPrompt(""); // clear input
+      setRegenPrompt("");
     } catch (err) {
       toast.error("Failed to regenerate scope");
       console.error(err);
@@ -177,59 +186,91 @@ export default function Exports() {
       [key]: { loading: false, progress: 0, controller: null },
     }));
 
-  // Load project
-  // ✅ Load project with guard to prevent auto-refresh right after finalization
   useEffect(() => {
+    let isActive = true;
+
     (async () => {
       try {
         setLoading(true);
+
+        // Fetch project metadata
         const res = await projectApi.getProject(id);
+        if (!isActive) return;
         setProject(res.data);
 
-        // Prevent overwriting immediately after finalize
-        if (isFinalized && justFinalized) return;
+        //  Try to load finalized_scope.json first
+        const latest = await getFinalizedScope(id);
+        if (!isActive) return;
 
-        const finalizedData = await getFinalizedScope(id);
-
-        if (finalizedData) {
-          setJsonText(JSON.stringify(finalizedData, null, 2));
+        if (latest && Object.keys(latest).length > 0) {
+          setJsonText(JSON.stringify(latest, null, 2));
           setIsFinalized(true);
+          console.log(" Loaded finalized_scope.json from blob");
         } else if (incomingDraft) {
+          // fallback to draft only if finalized file truly doesn’t exist
           setJsonText(JSON.stringify(incomingDraft, null, 2));
           setIsFinalized(false);
+          console.log("ℹ Showing draft_scope.json since no finalized version found");
         } else {
+          console.warn(" No scope found for project, showing empty editor");
           setJsonText("");
           setIsFinalized(false);
         }
-      } catch (e) {
-        console.error("Failed to load project:", e);
+      } catch (err) {
+        console.error(" Failed to load project or scope:", err);
+        toast.error("Failed to load finalized scope");
       } finally {
-        setLoading(false);
+        if (isActive) setLoading(false);
       }
     })();
-    // 👇 Important dependency: this prevents overwrite immediately after finalize
-  }, [id, incomingDraft, justFinalized]);
 
-  // 🧹 Clear cached PDF on JSON change
+    //  Auto-refresh when tab regains focus
+    const refreshOnFocus = async () => {
+      try {
+        const latest = await getFinalizedScope(id);
+        if (latest && isActive && Object.keys(latest).length > 0) {
+          setJsonText(JSON.stringify(latest, null, 2));
+          setIsFinalized(true);
+          console.log(" Refreshed finalized_scope.json on focus");
+        }
+      } catch (err) {
+        console.error(" Failed to refresh finalized scope on focus:", err);
+      }
+    };
+
+    window.addEventListener("focus", refreshOnFocus);
+    return () => {
+      isActive = false;
+      window.removeEventListener("focus", refreshOnFocus);
+    };
+  }, [id]);
+
+
+
+  //  Clear cached PDF & reset finalized state when JSON changes
   useEffect(() => {
     cachedPdfBlobRef.current = null;
     lastPdfKeyRef.current = "";
     setPreviewPdfUrl(null);
-  }, [jsonText]);
 
-  const prevJsonRef = useRef("");
-  useEffect(() => {
-    // Skip reset right after finalization to prevent false un-finalizing
-    if (isFinalized && prevJsonRef.current && prevJsonRef.current !== jsonText && !justFinalized) {
+    //  Only reset if this was a user edit (not internal finalize refresh)
+    if (!skipResetRef.current && isFinalized) {
       setIsFinalized(false);
+      setShowSuccessBanner(false);
     }
 
+    //  Always clear skip flag after handling one JSON update
+    skipResetRef.current = false;
+  }, [jsonText]);
+
+
+
+  // Keep finalized state stable and remove unnecessary reset logic
+  const prevJsonRef = useRef("");
+  useEffect(() => {
+    // Simply track JSON changes; don't auto-reset isFinalized
     prevJsonRef.current = jsonText;
-
-    // clear the flag once effect runs after finalize
-    if (justFinalized) setJustFinalized(false);
-  }, [jsonText, isFinalized, justFinalized]);
-
+  }, [jsonText]);
 
 
 
@@ -298,7 +339,7 @@ export default function Exports() {
         const rows = arr.map((r) =>
           headers.map((h) => {
             if (h.toLowerCase().includes("rate") || h.toLowerCase().includes("cost")) {
-              return formatCurrency(r[h]);
+              return formatCurrency(r[h], activeCurrency);
             }
             return r[h];
           })
@@ -322,7 +363,8 @@ export default function Exports() {
 
           const totalRow = headers.map((h, idx) => {
             if (idx === headers.length - 2) return Number(totalEfforts.toFixed(2));
-            if (idx === headers.length - 1) return formatCurrency(totalCost);
+            if (idx === headers.length - 1) return formatCurrency(totalCost, activeCurrency);
+
             return idx === 0 ? "Total" : "";
           });
 
@@ -336,6 +378,27 @@ export default function Exports() {
     }
   }, [parsedDraft, excelSection, activeTab]);
 
+  // Auto-refresh finalized scope when navigating back to Exports tab
+  useEffect(() => {
+    const refreshScope = async () => {
+      try {
+        const latest = await getFinalizedScope(id);
+        if (latest && Object.keys(latest).length > 0) {
+          setJsonText(JSON.stringify(latest, null, 2));
+          setIsFinalized(true);
+          console.log(" Reloaded finalized_scope.json after navigation");
+        }
+      } catch (err) {
+        console.error(" Failed to refresh finalized scope after navigation:", err);
+      }
+    };
+
+    // Run immediately whenever this component mounts or URL changes
+    refreshScope();
+  }, [id, location.key]);
+    
+  
+
   // ---------- Handle Finalize Scope ----------
   const handleFinalize = async () => {
     if (!parsedDraft) return;
@@ -344,12 +407,17 @@ export default function Exports() {
       await finalizeScope(id, parsedDraft);
       toast.success("Scope finalized successfully!");
 
-      setJustFinalized(true);   // 👈 add this line
+      //  No need for justFinalized
       setIsFinalized(true);
       setShowSuccessBanner(true);
 
+      //  Fetch latest finalized data immediately
       const finalizedData = await getFinalizedScope(id);
-      if (finalizedData) setJsonText(JSON.stringify(finalizedData, null, 2));
+      if (finalizedData) {
+        skipResetRef.current = true; 
+        setJsonText(JSON.stringify(finalizedData, null, 2));
+      }
+
 
       setPreviewPdfUrl(null);
     } catch (err) {
@@ -360,6 +428,11 @@ export default function Exports() {
       setTimeout(() => setShowSuccessBanner(false), 5000);
     }
   };
+
+  // Track if the JSON update came from finalize process
+  const skipResetRef = useRef(false);
+
+
 
 
   // ---------- Unified Download Handler ----------
@@ -477,14 +550,20 @@ export default function Exports() {
     </div>
   );
 
+  if (loading) {
+    return (
+      <div className="flex flex-col items-center justify-center h-[70vh] space-y-4 text-gray-600 dark:text-gray-300">
+        <Loader2 className="w-10 h-10 animate-spin text-primary" />
+        <p className="text-lg font-medium">Loading project scope…</p>
+        <p className="text-sm text-gray-400">Please wait while we fetch the data from blob storage</p>
+      </div>
+    );
+  }
+
+
+
   return (
     <div className="space-y-6">
-      <Link
-        to={`/projects/${id}`}
-        className="inline-flex items-center gap-2 text-primary hover:text-secondary transition font-medium"
-      >
-        <ArrowLeft className="w-5 h-5" /> Back to Project
-      </Link>
 
       <h1 className="text-2xl font-bold text-primary">
         Export Project {project ? project.name : "…"}
@@ -576,26 +655,6 @@ export default function Exports() {
             <p className="text-emerald-600 text-sm mt-2">JSON looks valid.</p>
           )}
           <div className="mt-4 flex gap-3 flex-wrap items-center">
-            <button
-              type="button" 
-              onClick={handleFinalize}
-              disabled={!parsedDraft || finalizing}
-              className={`px-4 py-2 rounded-lg text-white flex items-center gap-2 ${
-                finalizing
-                  ? "bg-emerald-400 cursor-not-allowed"
-                  : "bg-emerald-600 hover:bg-emerald-700"
-              }`}
-            >
-              {finalizing ? (
-                <>
-                  <Loader2 className="w-5 h-5 animate-spin" /> Finalizing…
-                </>
-              ) : (
-                <>
-                  <Save className="w-5 h-5" /> Finalize Scope
-                </>
-              )}
-            </button>
 
 
             {isFinalized && (
@@ -607,11 +666,11 @@ export default function Exports() {
                 >
                   {downloadState.json.loading ? (
                     <>
-                      <Loader2 className="w-5 h-5 animate-spin" /> JSON
+                      <Loader2 className="w-4 h-4 animate-spin" /> JSON
                     </>
                   ) : (
                     <>
-                      <Download className="w-5 h-5" /> Download JSON
+                      <Download className="w-4 h-4" /> Download JSON
                     </>
                   )}
                 </button>
@@ -659,7 +718,7 @@ export default function Exports() {
           {excelPreview.headers.length ? (
             <div className="overflow-x-auto max-h-[500px] border border-gray-200 rounded-lg shadow">
               <table className="min-w-full text-sm border-collapse">
-                <thead className="bg-gray-100 sticky top-0 z-10">
+                <thead className="bg-emerald-50 sticky top-0 z-10">
                   <tr>
                     {excelPreview.headers.map((h) => (
                       <th
@@ -711,7 +770,7 @@ export default function Exports() {
                                     const newRows = [...excelPreview.rows];
                                     newRows[i][j] = e.target.value;
                                     setExcelPreview({ ...excelPreview, rows: newRows });
-                                    updateParsedDraft(excelSection, newRows); // keep JSON in sync
+                                    updateParsedDraft(excelSection, newRows);
                                   }}
                                   className="w-full bg-transparent border-none focus:ring-0 text-sm px-1 py-0.5 h-4"
 
@@ -731,7 +790,7 @@ export default function Exports() {
                             }}
                             className="text-red-500 text-sm"
                           >
-                            Delete
+                            <Trash2 className="w-4 h-4 inline" />
                           </button>
                         )}
                       </td>
@@ -771,11 +830,11 @@ export default function Exports() {
               >
                 {downloadState.excel.loading ? (
                   <>
-                    <Loader2 className="w-5 h-5 animate-spin" /> Excel
+                    <Loader2 className="w-4 h-4 animate-spin" /> Excel
                   </>
                 ) : (
                   <>
-                    <Download className="w-5 h-5" /> Download Excel
+                    <Download className="w-4 h-4" /> Download Excel
                   </>
                 )}
               </button>
@@ -799,23 +858,49 @@ export default function Exports() {
       {activeTab === "pdf" && (
         <div className="space-y-4">
           {previewPdfUrl ? (
-            <div className="border rounded-lg overflow-hidden shadow max-h-[600px] overflow-y-auto">
-              <Document
-                file={previewPdfUrl}
-                onLoadSuccess={({ numPages }) => setNumPages(numPages)}
-              >
-                {Array.from({ length: numPages || 0 }, (_, i) => (
-                  <Page key={i} pageNumber={i + 1} />
-                ))}
-              </Document>
+            <div className="flex justify-center w-full">
+              <div className="w-full max-w-6xl border rounded-lg overflow-hidden shadow max-h-[600px] overflow-y-auto bg-white dark:bg-dark-surface">
+                <Document
+                  file={previewPdfUrl}
+                  onLoadSuccess={({ numPages }) => setNumPages(numPages)}
+                  loading={
+                    <div className="flex flex-col items-center justify-center h-[400px] text-gray-600 dark:text-gray-300">
+                      <Loader2 className="w-8 h-8 animate-spin text-emerald-600 mb-3" />
+                      <p className="text-sm font-medium">Loading PDF preview…</p>
+                    </div>
+                  }
+                  error={
+                    <div className="text-center text-red-500 p-4">
+                      <p>Failed to load PDF preview. Please try again.</p>
+                    </div>
+                  }
+                  className="flex flex-col items-center"
+                >
+                  {Array.from({ length: numPages || 0 }, (_, i) => (
+                    <Page
+                      key={i}
+                      pageNumber={i + 1}
+                      renderTextLayer={false}
+                      renderAnnotationLayer={false}
+                      width={1000} 
+                      className="mx-auto my-2"
+                    />
+                  ))}
+                </Document>
+              </div>
             </div>
           ) : (
-            <p className="text-gray-500 text-sm">
-              {isFinalized
-                ? "Loading final PDF preview…"
-                : "Generating draft PDF preview…"}
-            </p>
+            <div className="flex flex-col items-center justify-center h-[400px] text-gray-600 dark:text-gray-300">
+              <Loader2 className="w-8 h-8 animate-spin text-primary mb-3" />
+              <p className="text-sm font-medium">
+                {isFinalized
+                  ? "Loading final PDF from blob storage…"
+                  : "Generating draft PDF preview…"}
+              </p>
+            </div>
           )}
+
+
 
           {isFinalized && (
             <div className="flex items-center gap-2">
@@ -826,11 +911,11 @@ export default function Exports() {
               >
                 {downloadState.pdf.loading ? (
                   <>
-                    <Loader2 className="w-5 h-5 animate-spin" /> PDF
+                    <Loader2 className="w-4 h-4 animate-spin" /> PDF
                   </>
                 ) : (
                   <>
-                    <Download className="w-5 h-5" /> Download PDF
+                    <Download className="w-4 h-4" /> Download PDF
                   </>
                 )}
               </button>
@@ -850,37 +935,62 @@ export default function Exports() {
         </div>
       )}
 
-      {/* Download All */}
-      {isFinalized && (
-        <div className="pt-6 flex items-center gap-2">
-          <button
-            onClick={handleDownloadAll}
-            disabled={downloadState.all.loading}
-            className="px-6 py-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold inline-flex items-center gap-2"
-          >
-            {downloadState.all.loading ? (
-              <>
-                <Loader2 className="w-5 h-5 animate-spin" /> ZIP
-              </>
-            ) : (
-              <>
-                <Package className="w-5 h-5" /> Download All (ZIP)
-              </>
-            )}
-          </button>
-          {downloadState.all.loading && (
+      {/*  Finalize + Download All Section (Always visible at bottom) */}
+      <div className="pt-6 flex items-center gap-3 flex-wrap">
+        <button
+          type="button"
+          onClick={handleFinalize}
+          disabled={!parsedDraft || finalizing}
+          className={`px-4 py-2 rounded-lg text-white flex items-center gap-2 ${
+            finalizing
+              ? "bg-emerald-400 cursor-not-allowed"
+              : "bg-emerald-600 hover:bg-emerald-700"
+          }`}
+        >
+          {finalizing ? (
             <>
-              <ProgressBar percent={downloadState.all.progress} />
-              <button
-                onClick={() => downloadState.all.controller?.abort()}
-                className="px-3 py-2 bg-red-500 text-white rounded-lg flex items-center gap-1"
-              >
-                <XCircle className="w-4 h-4" /> Cancel
-              </button>
+              <Loader2 className="w-4 h-4 animate-spin" /> Finalizing…
+            </>
+          ) : (
+            <>
+              <Save className="w-4 h-4" /> Finalize Scope
             </>
           )}
-        </div>
-      )}
+        </button>
+
+        {isFinalized && (
+          <>
+            <button
+              onClick={handleDownloadAll}
+              disabled={downloadState.all.loading}
+              className="px-4 py-2 rounded-lg bg-primary hover:bg-primary/90 text-white font-semibold inline-flex items-center gap-2"
+            >
+              {downloadState.all.loading ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" /> ZIP
+                </>
+              ) : (
+                <>
+                  <Package className="w-4 h-4" /> Download All (ZIP)
+                </>
+              )}
+            </button>
+
+            {downloadState.all.loading && (
+              <>
+                <ProgressBar percent={downloadState.all.progress} />
+                <button
+                  onClick={() => downloadState.all.controller?.abort()}
+                  className="px-3 py-2 bg-red-500 text-white rounded-lg flex items-center gap-1"
+                >
+                  <XCircle className="w-4 h-4" /> Cancel
+                </button>
+              </>
+            )}
+          </>
+        )}
+      </div>
+
     </div>
   );
 }

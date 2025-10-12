@@ -1,11 +1,11 @@
 // src/api/exportApi.js
 import api from "./axiosClient";
 
-// ✅ Safe filename helper
+// Safe filename helper
 export const safeFileName = (name, ext) =>
   name.replace(/[^a-z0-9_\-]/gi, "_").toLowerCase() + `.${ext}`;
 
-// ✅ Generic GET export with progress + abort support
+// Generic GET export with progress + abort support
 const fetchExportBlob = async (url, { signal, onDownloadProgress } = {}) => {
   const res = await api.get(url, {
     responseType: "blob",
@@ -46,6 +46,10 @@ const exportApi = {
       scope,
       { responseType: "blob", signal, onDownloadProgress }
     );
+    console.log("Excel preview response:", res);
+    console.log("Excel preview headers:", res.headers);
+    console.log("Excel preview data type:", typeof res.data);
+    console.log("Excel preview data:", res.data);
     return res.data;
   },
 

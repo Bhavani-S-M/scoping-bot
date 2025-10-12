@@ -1,7 +1,7 @@
 // src/api/projectApi.js
 import api from "./axiosClient";
 
-// Helper to append only non-empty values
+// Helper: Append only non-empty values
 const appendIfPresent = (formData, key, value) => {
   if (value === undefined || value === null) return;
   const v = typeof value === "string" ? value.trim() : value;
@@ -11,10 +11,6 @@ const appendIfPresent = (formData, key, value) => {
 };
 
 const projectApi = {
-  // -------------------------
-  // Projects CRUD
-  // -------------------------
-
   getProjects: () => api.get("/projects"),
 
   getProject: (id) => api.get(`/projects/${id}`),
@@ -28,17 +24,19 @@ const projectApi = {
     appendIfPresent(formData, "complexity", data.complexity);
     appendIfPresent(formData, "tech_stack", data.tech_stack);
     appendIfPresent(formData, "use_cases", data.use_cases);
+    appendIfPresent(formData, "duration", data.duration);
 
-    // Compliance: allow multiple
+    // Compliance: allow multiple values
     if (Array.isArray(data.compliance)) {
       data.compliance.forEach((c) => formData.append("compliance", c));
     } else {
       appendIfPresent(formData, "compliance", data.compliance);
     }
 
-    appendIfPresent(formData, "duration", data.duration);
+    //  Company selection (important for multi-tenant ratecards)
+    appendIfPresent(formData, "company_id", data.company_id);
 
-    // Files
+    // Attach files if any
     if (Array.isArray(data.files) && data.files.length > 0) {
       data.files.forEach((item) => {
         const fileObj = item?.file || item;
@@ -46,7 +44,6 @@ const projectApi = {
           formData.append("files", fileObj);
         }
         if (item?.type) {
-          // Optional: store type alongside each file
           formData.append("file_types", String(item.type));
         }
       });
@@ -63,10 +60,6 @@ const projectApi = {
 
   deleteAllProjects: () => api.delete("/projects"),
 
-  // -------------------------
-  // Scope Handling
-  // -------------------------
-
   generateScope: (id) => api.get(`/projects/${id}/generate_scope`),
 
   finalizeScope: (id, scopeData) =>
@@ -79,13 +72,9 @@ const projectApi = {
       headers: { "Content-Type": "application/json" },
     }),
 
-  // ✅ NEW: Get finalized scope JSON back from backend
   getFinalizedScope: (id, { signal } = {}) =>
     api.get(`/projects/${id}/finalized_scope`, { signal }),
 
-  // -------------------------
-  // Blob Helpers (URLs only)
-  // -------------------------
   getDownloadUrl: (filePath, base = "projects") =>
     `${api.defaults.baseURL}/blobs/download/${filePath}?base=${base}`,
 

@@ -6,9 +6,9 @@ from datetime import datetime
 from fastapi_users import schemas as fa_schemas
 
 
-# -------------------------
-# User
-# -------------------------
+# ==========================================================
+# 👤 USER SCHEMAS
+# ==========================================================
 class UserRead(fa_schemas.BaseUser[uuid.UUID]):
     username: str
     is_superuser: bool
@@ -34,9 +34,9 @@ class UserList(BaseModel):
         from_attributes = True
 
 
-# -------------------------
-# Authentication
-# -------------------------
+# ==========================================================
+# 🔑 AUTHENTICATION
+# ==========================================================
 class Token(BaseModel):
     access_token: str
     refresh_token: Optional[str] = None
@@ -47,24 +47,67 @@ class TokenData(BaseModel):
     email: Optional[str] = None
 
 
-# -------------------------
-# Project File
-# -------------------------
-class ProjectFile(BaseModel):
+# ==========================================================
+# 💰 COMPANY + RATE CARD SCHEMAS
+# ==========================================================
+class CompanyBase(BaseModel):
+    name: str
+    currency: Optional[str] = "USD"
+
+
+class CompanyCreate(CompanyBase):
+    """Used when creating a new company."""
+    pass
+
+
+class CompanyRead(CompanyBase):
+    """Returned when reading company info."""
     id: uuid.UUID
-    file_name: str
-    file_path: str
-    uploaded_at: datetime
-    download_url: Optional[str] = None   # ✅ Added
-    preview_url: Optional[str] = None    # ✅ Added
+    owner_id: Optional[uuid.UUID] = None  # 👈 user who owns the company, None = global
 
     class Config:
         from_attributes = True
 
 
-# -------------------------
-# Project
-# -------------------------
+class RateCardBase(BaseModel):
+    role_name: str
+    monthly_rate: float
+
+
+class RateCardCreate(RateCardBase):
+    """Used when adding a new rate card."""
+    pass
+
+
+class RateCardUpdate(BaseModel):
+    """Used when updating existing rate cards."""
+    monthly_rate: float
+
+
+class RateCardRead(RateCardBase):
+    """Returned when fetching rate cards."""
+    id: uuid.UUID
+    company_id: uuid.UUID
+    user_id: Optional[uuid.UUID] = None 
+
+    class Config:
+        from_attributes = True
+
+
+# PROJECT FILE SCHEMAS
+class ProjectFile(BaseModel):
+    id: uuid.UUID
+    file_name: str
+    file_path: str
+    uploaded_at: datetime
+    download_url: Optional[str] = None
+    preview_url: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+# PROJECT SCHEMAS
 class ProjectBase(BaseModel):
     name: Optional[str] = None
     domain: Optional[str] = None
@@ -72,17 +115,19 @@ class ProjectBase(BaseModel):
     tech_stack: Optional[str] = None
     use_cases: Optional[str] = None
     compliance: Optional[str] = None
-    duration: Optional[str] = None  # consider int if you want stricter typing
+    duration: Optional[str] = None
 
 
 class ProjectCreate(ProjectBase):
-    pass
+    company_id: Optional[uuid.UUID] = None 
 
 
 class Project(ProjectBase):
     id: uuid.UUID
     files: List[ProjectFile] = []
     owner_id: Optional[uuid.UUID] = None
+    company_id: Optional[uuid.UUID] = None
+    company: Optional[CompanyRead] = None 
     created_at: datetime
     updated_at: Optional[datetime]
     has_finalized_scope: bool = False
@@ -91,19 +136,15 @@ class Project(ProjectBase):
         from_attributes = True
 
 
-# -------------------------
-# Scope Response
-# -------------------------
+# SCOPE RESPONSE
 class GeneratedScopeResponse(BaseModel):
     overview: Dict[str, Any] = {}
     activities: List[Dict[str, Any]] = []
     resourcing_plan: List[Dict[str, Any]] = []
-    architecture_diagram: Optional[str] = None 
+    architecture_diagram: Optional[str] = None
 
 
-# -------------------------
-# Generic Responses
-# -------------------------
+# GENERIC RESPONSES
 class MessageResponse(BaseModel):
     msg: str
     scope: Optional[Dict[str, Any]] = None
@@ -111,9 +152,7 @@ class MessageResponse(BaseModel):
     has_finalized_scope: Optional[bool] = None
 
 
-# -------------------------
-# Regenerate Scope
-# -------------------------
+# REGENERATE SCOPE
 class RegenerateScopeRequest(BaseModel):
     draft: Dict[str, Any]
     instructions: str

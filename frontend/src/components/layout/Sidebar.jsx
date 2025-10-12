@@ -6,21 +6,37 @@ import {
   Menu,
   History,
   Database,
+  Wallet,   
 } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
+import { useProjects } from "../../contexts/ProjectContext";
+
+
 
 export default function Sidebar({ isOpen, setIsOpen, mobileOpen }) {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const { projects } = useProjects();
 
+  const latestProjectId = projects?.length
+    ? [...projects]
+        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0]?.id
+    : null;
+
+  // Base nav items (everyone)
   const baseNavItems = [
     { path: "/dashboard", label: "Dashboard", icon: <LayoutDashboard className="w-5 h-5" /> },
     { path: "/projects", label: "Projects", icon: <FolderKanban className="w-5 h-5" /> },
     { path: "/history", label: "Project History", icon: <History className="w-5 h-5" /> },
-    { path: "/exports/1", label: "Exports", icon: <FileSpreadsheet className="w-5 h-5" /> },
+    {
+      path: latestProjectId ? `/exports/${latestProjectId}` : "/exports",
+      label: "Exports",
+      icon: <FileSpreadsheet className="w-5 h-5" />,
+    },
+    { path: "/ratecards", label: "Pricing", icon: <Wallet className="w-5 h-5" /> },
   ];
 
-  //  Add Blob Manage for superusers only
+  // Add Blob Manage only for superusers
   const navItems = user?.is_superuser
     ? [
         ...baseNavItems,

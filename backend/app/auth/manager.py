@@ -16,7 +16,6 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
     reset_password_token_secret = SECRET
     verification_token_secret = SECRET
 
-    # Token validity (3 days)
     verification_token_lifetime_seconds = 60 * 60 * 24 * 3  
 
     async def on_after_register(self, user: User, request: Request | None = None):

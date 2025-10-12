@@ -5,7 +5,7 @@ from fastapi import (
     APIRouter, Depends, HTTPException, UploadFile, File, Form, status
 )
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select 
+from sqlalchemy import select
 
 from app import schemas, models
 from app import crud as projects
@@ -14,13 +14,12 @@ from app.utils import scope_engine, azure_blob
 from app.auth.router import fastapi_users
 
 get_current_active_user = fastapi_users.current_user(active=True)
-
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/projects", tags=["Projects"])
 
 
-# List Projects
+# LIST ALL PROJECTS
 @router.get("", response_model=List[schemas.Project])
 async def list_projects(
     db: AsyncSession = Depends(get_async_session),
@@ -31,10 +30,13 @@ async def list_projects(
     for p in items:
         p.has_finalized_scope = await projects.has_finalized_scope(db, p.id)
 
+        if p.company_id:
+            await db.refresh(p, attribute_names=["company"])
+
     return items
 
 
-# Create Project
+# CREATE PROJECT
 @router.post("", response_model=schemas.Project, status_code=status.HTTP_201_CREATED)
 async def create_project(
     name: Optional[str] = Form(None),
@@ -44,6 +46,7 @@ async def create_project(
     use_cases: Optional[str] = Form(None),
     compliance: Optional[str] = Form(None),
     duration: Optional[str] = Form(None),
+    company_id: Optional[uuid.UUID] = Form(None),
     files: Optional[List[UploadFile]] = File(None),
     db: AsyncSession = Depends(get_async_session),
     current_user: models.User = Depends(get_current_active_user),
@@ -54,6 +57,23 @@ async def create_project(
             detail="At least one project field or file must be provided."
         )
 
+    if company_id:
+        from app.utils import ratecards
+        sigmoid = await ratecards.get_or_create_sigmoid_company(db)
+        if company_id != sigmoid.id:
+            result = await db.execute(
+                select(models.Company).filter(
+                    models.Company.id == company_id,
+                    models.Company.owner_id == current_user.id,
+                )
+            )
+            company = result.scalar_one_or_none()
+            if not company:
+                raise HTTPException(
+                    status_code=403,
+                    detail="You do not own this company."
+                )
+
     project_data = schemas.ProjectCreate(
         name=name.strip() if name else None,
         domain=domain,
@@ -62,28 +82,32 @@ async def create_project(
         use_cases=use_cases,
         compliance=compliance,
         duration=duration,
+        company_id=company_id,
     )
+
     db_project = await projects.create_project(db, project_data, current_user.id, files)
     db_project.has_finalized_scope = False
     return db_project
 
 
-# Get Project Details
+# GET PROJECT DETAILS
 @router.get("/{project_id}", response_model=schemas.Project)
 async def get_project(
     project_id: uuid.UUID,
     db: AsyncSession = Depends(get_async_session),
     current_user: models.User = Depends(get_current_active_user),
 ):
+    """Get project details including company and files."""
     project = await projects.get_project(db, project_id=project_id, owner_id=current_user.id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
+    await db.refresh(project, attribute_names=["company"])
     project.has_finalized_scope = await projects.has_finalized_scope(db, project.id)
     return project
 
 
-# Update Project
+# UPDATE PROJECT
 @router.put("/{project_id}", response_model=schemas.Project)
 async def update_project(
     project_id: uuid.UUID,
@@ -91,37 +115,43 @@ async def update_project(
     db: AsyncSession = Depends(get_async_session),
     current_user: models.User = Depends(get_current_active_user),
 ):
+    """Update editable fields of a project."""
     db_project = await projects.get_project(db, project_id=project_id, owner_id=current_user.id)
     if not db_project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    return await projects.update_project(db, db_project, project_update)
+    updated = await projects.update_project(db, db_project, project_update)
+    await db.refresh(updated, attribute_names=["company"])
+    return updated
 
-
-# Delete Project
+# DELETE PROJECT
 @router.delete("/{project_id}", response_model=schemas.MessageResponse)
 async def delete_project(
     project_id: uuid.UUID,
     db: AsyncSession = Depends(get_async_session),
     current_user: models.User = Depends(get_current_active_user),
 ):
+    """Delete a project. Blob cleanup handled automatically by event listeners."""
     db_project = await projects.get_project(db, project_id=project_id, owner_id=current_user.id)
     if not db_project:
         raise HTTPException(status_code=404, detail="Project not found")
 
     await projects.delete_project(db, db_project)
-    return {"msg": "Project deleted successfully"}
+    logger.info(f" Deleted project {project_id} (Blob folder auto-cleaned).")
+
+    return {"msg": f"Project {project_id} deleted successfully (DB + Blob auto-cleaned)."}
 
 
-# Delete All Projects
+#  DELETE ALL PROJECTS
 @router.delete("", response_model=schemas.MessageResponse)
 async def delete_all_projects(
     db: AsyncSession = Depends(get_async_session),
     current_user: models.User = Depends(get_current_active_user),
 ):
+    """Delete all projects for the current user (DB + Blob auto cleanup)."""
     count = await projects.delete_all_projects(db, owner_id=current_user.id)
-    return {"msg": f"Deleted {count} projects successfully"}
-
+    logger.info(f" Deleted {count} projects for user {current_user.id}.")
+    return {"msg": f"Deleted {count} projects successfully (DB + Blob auto-cleaned)."}
 
 # Generate Scope
 @router.get("/{project_id}/generate_scope", response_model=schemas.GeneratedScopeResponse)
@@ -167,9 +197,7 @@ async def finalize_project_scope(
         "has_finalized_scope": True
     }
 
-# -------------------------
 # Get Finalized Scope
-# -------------------------
 @router.get("/{project_id}/finalized_scope")
 async def get_finalized_scope(
     project_id: uuid.UUID,
@@ -189,8 +217,7 @@ async def get_finalized_scope(
     db_file = result.scalars().first()
 
     if not db_file:
-        # ✅ Return gracefully instead of 404
-        return None  # or: return {"has_finalized_scope": False, "scope": None}
+        return None 
 
     try:
         blob_bytes = await azure_blob.download_bytes(db_file.file_path)
@@ -202,9 +229,7 @@ async def get_finalized_scope(
 
 
 
-# -------------------------
 # Regenerate Scope
-# -------------------------
 @router.post("/{project_id}/regenerate_scope", response_model=schemas.GeneratedScopeResponse)
 async def regenerate_scope_with_instructions(
     project_id: uuid.UUID,
@@ -229,3 +254,4 @@ async def regenerate_scope_with_instructions(
     except Exception as e:
         logger.error(f"Scope regeneration failed for {project_id}: {e}")
         raise HTTPException(status_code=500, detail="Scope regeneration failed")
+    

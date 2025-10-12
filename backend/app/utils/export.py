@@ -2,6 +2,7 @@
 from __future__ import annotations
 import io, json
 from datetime import datetime, timezone, timedelta
+from textwrap import wrap
 from typing import Any, Dict
 from reportlab.platypus import Image as RLImage
 import xlsxwriter
@@ -26,17 +27,21 @@ THEME = {
     "total_bg": "#C6E0B4",
     "palette": ["#8DA6D7", "#E2DBBB", "#97BAEB", "#F28282", "#B9E7EB", "#E0C0A8"]
 }
-
-# Default Role rate
-ROLE_RATE_MAP: Dict[str, float] = {
-    "Backend Developer": 3000.0, "Frontend Developer": 2800.0,
-    "QA Analyst": 1800.0, "QA Engineer": 2000.0,
-    "Data Engineer": 2800.0, "Data Analyst": 2200.0,
-    "Data Architect": 3500.0, "UX Designer": 2500.0,
-    "UI/UX Designer": 2600.0, "Project Manager": 3500.0,
-    "Cloud Engineer": 3000.0, "BI Developer": 2700.0,
-    "DevOps Engineer": 3200.0, "Security Administrator": 3000.0,
-    "System Administrator": 2800.0, "Solution Architect": 4000.0
+# Currency symbols for formatting
+CURRENCY_SYMBOLS = {
+    "USD": "$",
+    "INR": "₹",
+    "EUR": "€",
+    "GBP": "£",
+    "CAD": "C$",
+    "SGD": "S$",
+    "AUD": "A$",
+    "NZD": "NZ$",
+    "JPY": "¥",
+    "CHF": "CHF",
+    "CNY": "¥",
+    "SEK": "kr",
+    "NOK": "kr",
 }
 
 IST = timezone(timedelta(hours=5, minutes=30))
@@ -52,6 +57,9 @@ def generate_xlsx(scope: Dict[str, Any]) -> io.BytesIO:
         data = scope
         buf = io.BytesIO()
         wb = xlsxwriter.Workbook(buf, {"in_memory": True})
+        currency = (data.get("overview", {}) or {}).get("Currency", "USD").upper()
+        symbol = CURRENCY_SYMBOLS.get(currency, "$")
+
 
         # ---------- Formats ----------
         fmt_th = wb.add_format({
@@ -62,7 +70,11 @@ def generate_xlsx(scope: Dict[str, Any]) -> io.BytesIO:
         fmt_z2 = wb.add_format({"border": 1, "bg_color": THEME["zebra2"]})
         fmt_date = wb.add_format({"border": 1, "num_format": "yyyy-mm-dd"})
         fmt_num = wb.add_format({"border": 1, "num_format": "0.00"})
-        fmt_money = wb.add_format({"border": 1, "num_format": "$#,##0.00"})
+        fmt_money = wb.add_format({
+            "border": 1,
+            "num_format": f'"{symbol}"#,##0.00'
+        })
+
         fmt_total = wb.add_format({"bold": True, "border": 1, "bg_color": THEME["total_bg"]})
 
         # --------- Overview ----------
@@ -116,7 +128,7 @@ def generate_xlsx(scope: Dict[str, Any]) -> io.BytesIO:
         # Column Formulas
         if data.get("activities"):
             ws_a.add_table(
-                f"A1:I{last_a}",   # Now 9 columns instead of 10
+                f"A1:I{last_a}",
                 {
                     "name": "ActivitiesTable",
                     "columns": [
@@ -149,15 +161,15 @@ def generate_xlsx(scope: Dict[str, Any]) -> io.BytesIO:
                 gantt = wb.add_chart({"type": "bar", "subtype": "stacked"})
                 gantt.add_series({
                     "name": "Start",
-                    "categories": f"='Activities'!$B$2:$B${last_a}",  # Activities col
-                    "values": f"='Activities'!$F$2:$F${last_a}",      # Start Date col
+                    "categories": f"='Activities'!$B$2:$B${last_a}",
+                    "values": f"='Activities'!$F$2:$F${last_a}",  
                     "fill": {"none": True},
                     "border": {"none": True}
                 })
                 gantt.add_series({
                     "name": "Duration",
-                    "categories": f"='Activities'!$B$2:$B${last_a}",  # Activities col
-                    "values": f"='Activities'!$I$2:$I${last_a}",      # DurationTemp col
+                    "categories": f"='Activities'!$B$2:$B${last_a}", 
+                    "values": f"='Activities'!$I$2:$I${last_a}",  
                     "fill": {"color": "#4D96FF"},
                     "border": {"color": "#4D96FF"}
                 })
@@ -278,6 +290,9 @@ def generate_xlsx(scope: Dict[str, Any]) -> io.BytesIO:
 # PDF EXPORT
 async def generate_pdf(scope: Dict[str, Any]) -> io.BytesIO:
     data = scope or {}
+    currency = (data.get("overview", {}) or {}).get("Currency", "USD").upper()
+    symbol = "Rs. " if currency == "INR" else CURRENCY_SYMBOLS.get(currency, "$")
+
     buf = io.BytesIO()
     W, H = landscape(A4)
     doc = SimpleDocTemplate(
@@ -288,8 +303,11 @@ async def generate_pdf(scope: Dict[str, Any]) -> io.BytesIO:
 
     styles = getSampleStyleSheet()
     wrap = styles["Normal"]
-    wrap.fontSize = 7
-    wrap.leading = 9
+    wrap.fontSize = 10     
+    wrap.leading = 12       
+    wrap.spaceAfter = 3
+    wrap.spaceBefore = 3
+
     elems = []
 
     # -------- Title --------
@@ -337,29 +355,42 @@ async def generate_pdf(scope: Dict[str, Any]) -> io.BytesIO:
             elems.append(Spacer(1, 0.6 * cm))
 
         except Exception as e:
-            print(f"⚠️ Failed to embed architecture diagram: {e}")
+            print(f" Failed to embed architecture diagram: {e}")
 
     # -------- Overview --------
     ov = data.get("overview", {})
     if ov:
-        ov_rows = [["Field", "Value"]] + [[k, str(v)] for k, v in ov.items()]
-        tbl = Table(ov_rows, colWidths=[110, 700], repeatRows=1)
+        ov_rows = [["Field", "Value"]]
+        for k, v in ov.items():
+            # 🔹 Append "months" if key is Duration and value is a number
+            if isinstance(v, (int, float)) and k.strip().lower() == "duration":
+                display_val = f"{v} months"
+            else:
+                display_val = str(v)
+            ov_rows.append([k, display_val])
+
+        tbl = Table(ov_rows, colWidths=[120, 720], repeatRows=1)
         ts_ov = TableStyle([
             ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(THEME["header_bg"])),
+            ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
+            ("FONTSIZE", (0, 0), (-1, -1), 10),
             ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ])
+
         for i in range(1, len(ov_rows)):
             ts_ov.add(
                 "BACKGROUND", (0, i), (-1, i),
                 colors.HexColor(THEME["zebra1" if i % 2 else "zebra2"])
             )
+
         tbl.setStyle(ts_ov)
         tbl.hAlign = "LEFT"
         elems.append(Paragraph("<b>Project Overview</b>", styles["Heading2"]))
         elems.append(tbl)
         elems.append(Spacer(1, 0.6 * cm))
+
 
     # -------- Activities --------
     activities = data.get("activities", [])
@@ -389,12 +420,15 @@ async def generate_pdf(scope: Dict[str, Any]) -> io.BytesIO:
             ])
 
         t = Table(rows, repeatRows=1,
-                  colWidths=[25, 150, 200, 100, 120, 70, 70, 90])
+                  colWidths=[25, 150, 225, 100, 120, 70, 70, 80])
         ts = TableStyle([
             ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(THEME["header_bg"])),
+            ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
+            ("FONTSIZE", (0, 0), (-1, -1), 10),
             ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
         ])
+
         for i in range(1, len(rows)):
             ts.add("BACKGROUND", (0, i), (-1, i),
                    colors.HexColor(THEME["zebra1" if i % 2 else "zebra2"]))
@@ -431,7 +465,7 @@ async def generate_pdf(scope: Dict[str, Any]) -> io.BytesIO:
                     w = max(1, (e - s).days) * px_per_day
                     label = (a["Activities"] or "")[:35]
                     d.add(Rect(x, y, w, 10, fillColor=colors.HexColor("#4D96FF")))
-                    d.add(String(x+w+4, y+2, label, fontSize=6))
+                    d.add(String(x+w+4, y+2, label, fontSize=8))
                 elems.append(Paragraph("<b>Project Timeline</b>", styles["Heading2"]))
                 elems.append(d)
                 elems.append(Spacer(1, 0.6 * cm))
@@ -471,22 +505,24 @@ async def generate_pdf(scope: Dict[str, Any]) -> io.BytesIO:
         tot_eff = tot_cost = 0
         pie_labels, pie_vals = [], []
         base_rows = []
-        for idx, r in enumerate(merged_res, start=1):  # <-- auto incremental ID
+        for idx, r in enumerate(merged_res, start=1):
             tot_eff += r["Efforts"]; tot_cost += r["Cost"]
             pie_labels.append(r["Resources"]); pie_vals.append(r["Cost"])
             base_rows.append([
                 idx,
                 Paragraph(r["Resources"], wrap),
-                f"${r['Rate/month']:,.2f}",
+                f"{symbol}{r['Rate/month']:,.2f}",
                 *[f"{v:.2f}" for v in r["months"]], 
                 f"{r['Efforts']:.2f}",
-                f"${r['Cost']:,.2f}"
+                f"{symbol}{r['Cost']:,.2f}"
+
             ])
 
         base_rows.append(
-            ["Total", "", ""] + [""]*len(mkeys) +
-            [f"{tot_eff:.2f}", f"${tot_cost:,.2f}"]
-        )
+        ["Total", "", ""] + [""]*len(mkeys) +
+        [f"{tot_eff:.2f}", f"{symbol}{tot_cost:,.2f}"]
+    )
+
 
         # ---- Split into chunks if too wide ----
         MAX_MONTH_COLS = 10
@@ -505,14 +541,17 @@ async def generate_pdf(scope: Dict[str, Any]) -> io.BytesIO:
             sub_rows.insert(0, header)
 
             t2 = LongTable(sub_rows, repeatRows=1,
-                        colWidths=[30, 90, 70] + [55]*len(month_chunk) + [50, 65])
+                        colWidths=[40, 120, 70] + [55]*len(month_chunk) + [50, 80])
             ts2 = TableStyle([
                 ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
                 ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(THEME["header_bg"])),
+                ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
+                ("FONTSIZE", (0, 0), (-1, -1), 10),
                 ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
                 ("BACKGROUND", (0, len(sub_rows)-1), (-1, len(sub_rows)-1),
                 colors.HexColor(THEME["total_bg"]))
             ])
+
             for i in range(1, len(sub_rows)-1):
                 ts2.add("BACKGROUND", (0, i), (-1, i),
                         colors.HexColor(THEME["zebra1" if i % 2 else "zebra2"]))
@@ -536,6 +575,7 @@ async def generate_pdf(scope: Dict[str, Any]) -> io.BytesIO:
                 pie.slices[i].fillColor = colors.HexColor(pal[i % len(pal)])
             d2.add(pie)
             elems.append(Paragraph("<b>Cost Projection</b>", styles["Heading2"]))
+            elems.append(Spacer(1, 0.6 * cm))
             elems.append(d2)
 
     # Build PDF
