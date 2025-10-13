@@ -19,6 +19,14 @@ export default function Register() {
   const handleSubmit = async (e) => {
     e.preventDefault();
 
+    const allowedDomain = "sigmoidanalytics.com";
+    const emailDomain = form.email.split("@")[1]?.toLowerCase();
+
+    if (emailDomain !== allowedDomain) {
+      alert(` Registration allowed only for ${allowedDomain} users.`);
+      return;
+    }
+
     if (form.password !== form.confirmPassword) {
       alert(" Passwords do not match!");
       return;
@@ -47,6 +55,7 @@ export default function Register() {
       setLoading(false);
     }
   };
+
 
   return (
     <div className="flex items-center justify-center min-h-screen bg-gray-50 dark:bg-dark-surface">

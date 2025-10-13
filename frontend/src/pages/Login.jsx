@@ -23,13 +23,7 @@ export default function Login() {
       // Fetch user profile
       const me = await authApi.getMe();
       const user = me.data;
-
-      // Navigate based on role
-      if (user?.is_superuser) {
-        navigate("/blobs");
-      } else {
-        navigate("/dashboard");
-      }
+      navigate("/dashboard");
     } catch (err) {
       console.error(" Login error:", err);
       alert(" Login failed. Check your credentials and try again.");
