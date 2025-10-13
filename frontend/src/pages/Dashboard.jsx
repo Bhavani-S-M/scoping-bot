@@ -169,7 +169,11 @@ export default function Dashboard() {
               </tr>
             </thead>
             <tbody>
-              {projects.slice(-5).map((p) => (
+              {[...projects]
+                .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+                .slice(0, 5)
+                .map((p) => (
+
                 <tr
                   key={p.id}
                   className="border-t border-gray-200 dark:border-dark-muted hover:bg-gray-50 dark:hover:bg-dark-background transition"
