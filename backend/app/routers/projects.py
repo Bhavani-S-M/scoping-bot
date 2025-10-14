@@ -255,3 +255,106 @@ async def regenerate_scope_with_instructions(
         logger.error(f"Scope regeneration failed for {project_id}: {e}")
         raise HTTPException(status_code=500, detail="Scope regeneration failed")
     
+@router.post(
+    "/{project_id}/generate_questions",
+    response_model=schemas.GenerateQuestionsResponse
+)
+async def generate_project_questions_route(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_async_session),
+    current_user: models.User = Depends(get_current_active_user),
+):
+    # Fetch project
+    db_project = await projects.get_project(db, project_id=project_id, owner_id=current_user.id)
+    if not db_project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    try:
+        # Generate categorized questions
+        data = await scope_engine.generate_project_questions(db, db_project)
+        total_q = sum(len(c["items"]) for c in data.get("questions", []))
+
+        return {
+            "msg": f"Generated {total_q} questions successfully",
+            "questions": data.get("questions", []),
+        }
+    except Exception as e:
+        logger.error(f"Question generation failed for {project_id}: {e}")
+        raise HTTPException(status_code=500, detail="Question generation failed")
+
+# ==========================================================
+# 🧠 Update Project Questions with User Input
+# ==========================================================
+@router.post("/{project_id}/update_questions")
+async def update_project_questions_with_answers(
+    project_id: uuid.UUID,
+    payload: Dict[str, Any],
+    db: AsyncSession = Depends(get_async_session),
+    current_user: models.User = Depends(get_current_active_user),
+):
+    """
+    Merge user answers into existing questions.json and re-save to Blob + DB.
+    Expected payload structure:
+    {
+      "Architecture": {
+        "What is the preferred deployment model?": "Cloud-based",
+        "Do you need auto-scaling or load balancing?": "Yes, via AKS"
+      },
+      "Data & Security": {
+        "Will sensitive data be stored or processed?": "Yes, PII data"
+      }
+    }
+    """
+    # Fetch project
+    db_project = await projects.get_project(db, project_id=project_id, owner_id=current_user.id)
+    if not db_project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    user_answers = payload or {}
+    if not user_answers:
+        raise HTTPException(status_code=400, detail="Missing user_answers payload")
+
+    try:
+        result = await scope_engine.update_questions_with_user_input(db, db_project, user_answers)
+        return {
+            "msg": "Questions updated successfully with user answers.",
+            "updated_questions": result.get("questions", []),
+        }
+    except Exception as e:
+        logger.error(f"Failed to update questions.json for project {project_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to update questions.json")
+
+# ==========================================================
+# 📂 Get Project Questions (from Blob)
+# ==========================================================
+@router.get("/{project_id}/questions")
+async def get_project_questions(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_async_session),
+    current_user: models.User = Depends(get_current_active_user),
+):
+    """
+    Fetch the latest questions.json for a project from Azure Blob Storage.
+    Returns the same structure used by generate_questions.
+    """
+    # Fetch project
+    db_project = await projects.get_project(db, project_id=project_id, owner_id=current_user.id)
+    if not db_project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    blob_name = f"projects/{project_id}/questions.json"
+
+    try:
+        # Check if blob exists
+        if not await azure_blob.blob_exists(blob_name):
+            raise HTTPException(status_code=404, detail="questions.json not found for this project")
+
+        # Download the blob content
+        q_bytes = await azure_blob.download_bytes(blob_name)
+        q_json = json.loads(q_bytes.decode("utf-8"))
+        return q_json
+
+    except Exception as e:
+        logger.error(f"Failed to fetch questions.json for project {project_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch project questions")
+

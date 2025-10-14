@@ -156,3 +156,18 @@ class MessageResponse(BaseModel):
 class RegenerateScopeRequest(BaseModel):
     draft: Dict[str, Any]
     instructions: str
+# QUESTION GENERATION SCHEMAS
+class QuestionItem(BaseModel):
+    question: str
+    user_understanding: Optional[str] = ""
+    comment: Optional[str] = ""
+
+
+class QuestionCategory(BaseModel):
+    category: str
+    items: List[QuestionItem]
+
+
+class GenerateQuestionsResponse(BaseModel):
+    msg: str
+    questions: List[QuestionCategory]

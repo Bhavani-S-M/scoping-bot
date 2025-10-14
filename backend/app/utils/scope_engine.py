@@ -394,6 +394,286 @@ def _build_scope_prompt(rfp_text: str, kb_chunks: List[str], project=None, model
         f"RFP / Project Files Content:\n{rfp_text}\n\n"
         f"Knowledge Base Context (for enrichment only):\n{kb_context}\n"
     )
+def _build_questionnaire_prompt(rfp_text: str, kb_chunks: List[str], project=None) -> str:
+    """
+    Build a focused prompt to generate categorized questions
+    grouped under relevant topics (Architecture, Data, Security, etc.)
+    """
+    name = getattr(project, "name", "Unnamed Project")
+    domain = getattr(project, "domain", "General")
+    tech = getattr(project, "tech_stack", "Modern Web Stack")
+    compliance = getattr(project, "compliance", "General")
+    duration = getattr(project, "duration", "TBD")
+
+    return f"""
+You are an expert business analyst who reviews RFPs and creates structured questionnaires
+to clarify requirements before project scoping.
+
+Based on the following information, generate **categorized questions** grouped logically.
+
+Project Context:
+- Project Name: {name}
+- Domain: {domain}
+- Tech Stack: {tech}
+- Compliance: {compliance}
+- Duration: {duration}
+
+RFP Content:
+{rfp_text}
+
+Knowledge Base Context:
+{kb_chunks}
+
+---
+
+Return ONLY valid JSON in the following format:
+
+{{
+  "questions": [
+    {{
+      "category": "Architecture",
+      "items": [
+        {{
+          "question": "What is the preferred deployment model?",
+          "user_understanding": "",
+          "comment": ""
+        }},
+        {{
+          "question": "Do you need auto-scaling or load balancing?",
+          "user_understanding": "",
+          "comment": ""
+        }}
+      ]
+    }},
+    {{
+      "category": "Data & Security",
+      "items": [
+        {{
+          "question": "Will sensitive data be stored or processed?",
+          "user_understanding": "",
+          "comment": ""
+        }}
+      ]
+    }}
+  ]
+}}
+
+Rules:
+- Group questions by meaningful categories (Architecture, Data, Integration, Compliance, Delivery, etc.)
+- Each category must have at least 2 questions.
+- Every question must be clear, specific, and require a short textual answer.
+- Always include empty strings for 'user_understanding' and 'comment'.
+- Return ONLY valid JSON (no markdown, no explanations).
+"""
+def _extract_questions_from_text(raw_text: str) -> list[dict]:
+    """
+    Extract categorized questions from JSON or text.
+    Output format:
+    [
+      {
+        "category": "Architecture",
+        "items": [
+          {"question": "...", "user_understanding": "", "comment": ""}
+        ]
+      }
+    ]
+    """
+    try:
+        parsed = _extract_json(raw_text)
+
+        # Case 1: Proper JSON with nested categories
+        if isinstance(parsed, dict) and "questions" in parsed:
+            qdata = parsed["questions"]
+            if isinstance(qdata, list) and all(isinstance(x, dict) for x in qdata):
+                # check if already nested structure
+                if "items" in qdata[0]:
+                    normalized = []
+                    for cat in qdata:
+                        normalized.append({
+                            "category": cat.get("category", "General"),
+                            "items": [
+                                {
+                                    "question": i.get("question", ""),
+                                    "user_understanding": i.get("user_understanding", ""),
+                                    "comment": i.get("comment", "")
+                                } for i in cat.get("items", [])
+                            ]
+                        })
+                    return normalized
+
+                # Otherwise, flat → group by category
+                grouped = {}
+                for q in qdata:
+                    cat = q.get("category", "General") if isinstance(q, dict) else "General"
+                    que = q.get("question", q) if isinstance(q, dict) else str(q)
+                    grouped.setdefault(cat, []).append({
+                        "question": que,
+                        "user_understanding": "",
+                        "comment": ""
+                    })
+                return [{"category": c, "items": lst} for c, lst in grouped.items()]
+
+        # Case 2: List of plain questions
+        if isinstance(parsed, list):
+            return [{
+                "category": "General",
+                "items": [{"question": str(q), "user_understanding": "", "comment": ""} for q in parsed]
+            }]
+    except Exception:
+        pass
+
+    # Fallback — parse raw text
+    current_cat = "General"
+    grouped: dict[str, list] = {}
+    for line in raw_text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if re.match(r"^(#+\s*)?([A-Z][A-Za-z\s&/]+):?$", line) and not line.endswith("?"):
+            current_cat = re.sub(r"^#+\s*", "", line).strip(": ").strip()
+            continue
+        if "?" in line:
+            qtext = re.sub(r"^\d+[\).\s]+", "", line).strip()
+            grouped.setdefault(current_cat, []).append({
+                "question": qtext,
+                "user_understanding": "",
+                "comment": ""
+            })
+
+    return [{"category": c, "items": lst} for c, lst in grouped.items()]
+async def generate_project_questions(db: AsyncSession, project) -> dict:
+    """
+    Generate a categorized questionnaire for the given project using Azure OpenAI.
+    Saves the questions.json file in Azure Blob.
+    """
+    if client is None or deployment is None:
+        logger.warning("Azure OpenAI not configured — skipping question generation")
+        return {"questions": []}
+
+    # ---------- Extract RFP ----------
+    rfp_text = ""
+    try:
+        if getattr(project, "files", None):
+            files = [{"file_name": f.file_name, "file_path": f.file_path} for f in project.files]
+            if files:
+                rfp_text = await _extract_text_from_files(files)
+    except Exception as e:
+        logger.warning(f"Failed to extract RFP for questions: {e}")
+
+    # ---------- Retrieve Knowledge Base ----------
+    kb_results = _rag_retrieve(rfp_text or project.name or project.domain)
+    kb_chunks = [ch["content"] for group in kb_results for ch in group["chunks"]] if kb_results else []
+
+    # ---------- Build prompt ----------
+    prompt = _build_questionnaire_prompt(rfp_text, kb_chunks, project)
+
+    # ---------- Query Azure OpenAI ----------
+    try:
+        resp = await anyio.to_thread.run_sync(
+            lambda: client.chat.completions.create(
+                model=deployment,
+                messages=[
+                    {"role": "system", "content": "You are an expert business analyst."},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.4,
+            )
+        )
+
+        raw_text = resp.choices[0].message.content.strip()
+        questions = _extract_questions_from_text(raw_text)
+        total_q = sum(len(cat["items"]) for cat in questions)
+        logger.info(f" Generated {total_q} questions under {len(questions)} categories for project {project.id}")
+
+        # ---------- Save to Blob Storage ----------
+        blob_name = f"{PROJECTS_BASE}/{project.id}/questions.json"
+        try:
+            await azure_blob.upload_bytes(
+                json.dumps({"questions": questions}, ensure_ascii=False, indent=2).encode("utf-8"),
+                blob_name,
+            )
+
+            db_file = models.ProjectFile(
+                project_id=project.id,
+                file_name="questions.json",
+                file_path=blob_name,
+            )
+
+            db.add(db_file)
+            await db.commit()
+            await db.refresh(db_file)
+
+            logger.info(f" Saved questions.json for project {project.id}")
+        except Exception as e:
+            logger.warning(f"Failed to upload questions.json: {e}")
+
+        return {"questions": questions}
+
+    except Exception as e:
+        logger.error(f" Question generation failed: {e}")
+        return {"questions": []}
+    
+# Update questions.json with user input answers
+async def update_questions_with_user_input(
+    db: AsyncSession, project, user_answers: dict
+) -> dict:
+    """
+    Merge user answers into the existing questions.json for the given project.
+    Example user_answers structure:
+    {
+      "Architecture": {
+         "What is the preferred deployment model?": "Cloud-based",
+         "Do you need auto-scaling or load balancing?": "Yes, via AKS"
+      },
+      "Data & Security": {
+         "Will sensitive data be stored or processed?": "Yes, PII data"
+      }
+    }
+    """
+    from app.utils import azure_blob
+
+    blob_name = f"{PROJECTS_BASE}/{project.id}/questions.json"
+    try:
+        # Load current questions.json
+        q_bytes = await azure_blob.download_bytes(blob_name)
+        q_json = json.loads(q_bytes.decode("utf-8"))
+        questions = q_json.get("questions", [])
+
+        # Merge answers into the structure
+        for cat in questions:
+            cat_name = cat.get("category")
+            for item in cat.get("items", []):
+                q_text = item.get("question")
+                ans = (
+                    user_answers.get(cat_name, {}).get(q_text)
+                    if user_answers.get(cat_name)
+                    else None
+                )
+                if ans:
+                    item["user_understanding"] = ans
+
+        # Upload updated JSON to Blob
+        new_bytes = json.dumps({"questions": questions}, ensure_ascii=False, indent=2).encode("utf-8")
+        await azure_blob.upload_bytes(new_bytes, blob_name)
+        logger.info(f" Updated questions.json with user input for project {project.id}")
+
+        #  Save / update DB record
+        db_file = models.ProjectFile(
+            project_id=project.id,
+            file_name="questions.json",
+            file_path=blob_name,
+        )
+        db.add(db_file)
+        await db.commit()
+        await db.refresh(db_file)
+
+        return {"questions": questions}
+
+    except Exception as e:
+        logger.error(f"Failed to update questions.json with user input: {e}")
+        return {}
+
+
 
 
 def _parse_date_safe(val: Any, fallback: datetime = None) -> datetime:
@@ -1039,6 +1319,27 @@ async def generate_project_scope(db: AsyncSession, project) -> dict:
     logger.info(
         f"Final RFP tokens: {len(rfp_tokens)}, KB tokens: {used_tokens - len(rfp_tokens)}, Total: {used_tokens}/{max_total_tokens}"
     )
+    # ---------- Load questions.json (if exists) and include user answers ----------
+    try:
+        q_blob_name = f"{PROJECTS_BASE}/{project.id}/questions.json"
+        if await azure_blob.blob_exists(q_blob_name):
+            q_bytes = await azure_blob.download_bytes(q_blob_name)
+            q_json = json.loads(q_bytes.decode("utf-8"))
+            question_context = []
+            for cat in q_json.get("questions", []):
+                question_context.append(f"### {cat.get('category', 'General')}")
+                for item in cat.get("items", []):
+                    q = item.get("question", "")
+                    a = item.get("user_understanding", "")
+                    question_context.append(f"Q: {q}\nA: {a or '(unanswered)'}")
+            question_text = "\n".join(question_context)
+            rfp_text += f"\n\n---\n## Clarification Questions and Answers\n{question_text}"
+            logger.info(f"✅ Included questions.json context for project {project.id}")
+        else:
+            logger.info(f"ℹ️ No questions.json found for project {project.id}, skipping.")
+    except Exception as e:
+        logger.warning(f"⚠️ Could not include questions.json context: {e}")
+
 
     # ---------- Build + query ----------
     prompt = _build_scope_prompt(rfp_text, kb_chunks, project, model_name=model_name)

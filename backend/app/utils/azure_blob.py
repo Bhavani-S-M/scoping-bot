@@ -120,13 +120,10 @@ async def delete_blob(blob_name: str, base: str = "") -> bool:
     blob = container.get_blob_client(path)
     try:
         await blob.delete_blob()
-        print(f" Deleted blob: {path}")
         return True
     except ResourceNotFoundError:
-        print(f" Blob already deleted: {path}")
         return False
     except Exception as e:
-        print(f" Failed to delete blob {path}: {e}")
         return False
 
 async def delete_folder(prefix: str, base: str = "") -> List[str]:
@@ -156,7 +153,6 @@ async def delete_folder(prefix: str, base: str = "") -> List[str]:
             tasks.append(_delete_single(blob.name))
         if tasks:
             await asyncio.gather(*tasks)
-        print(f"Deleted {len(deleted)} blobs under {path}")
     except Exception as e:
         print(f"delete_folder failed for {path}: {e}")
     return deleted
@@ -171,7 +167,6 @@ async def delete_blob_async(blob_path: str) -> bool:
     try:
         # Folder delete
         if blob_path.endswith("/") or "." not in blob_path:
-            print(f"🧹 Deleting folder recursively: {blob_path}")
             await delete_folder(blob_path)
             return True
         # Single file delete
@@ -194,7 +189,7 @@ def delete_blob_sync(blob_path: str):
     except RuntimeError:
         return asyncio.run(delete_blob_async(blob_path))
     except Exception as e:
-        print(f"⚠️ delete_blob_sync failed for {blob_path}: {e}")
+        print(f" delete_blob_sync failed for {blob_path}: {e}")
         return False
 
 

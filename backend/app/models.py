@@ -190,7 +190,6 @@ def delete_project_folder(mapper, connection, target):
     try:
         from app.utils import azure_blob
         prefix = f"projects/{target.id}/"
-        print(f" [Project] Triggering Azure Blob cleanup for folder: {prefix}")
 
         # Fire-and-forget cleanup
         azure_blob.safe_delete_blob(prefix)
@@ -211,6 +210,5 @@ def delete_blob_after_file_delete(mapper, connection, target):
         if target.file_path:
             from app.utils import azure_blob
             azure_blob.safe_delete_blob(target.file_path)
-            print(f" [File] Deleted blob: {target.file_path}")
     except Exception as e:
         print(f" [File] Failed to delete blob {getattr(target, 'file_path', None)}: {e}")

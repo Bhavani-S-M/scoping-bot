@@ -42,35 +42,48 @@ export const ProjectProvider = ({ children }) => {
     }
   };
 
-  /**
-   * Create a new project and immediately generate its scope + previews.
-   * Supports company_id (for ratecards context)
-   */
+  // ==========================================================
+  // 🧱 Create Project (Only — no scope, no questions)
+  // ==========================================================
   const createProject = async (data) => {
     try {
-      //  1. Create project (includes company_id if present)
+      //  1️⃣ Create project record only
       const res = await projectApi.createProject(data);
       const projectId = res.data.id;
 
-      //  2. Generate scope
+      //  2️⃣ Refresh project list
+      const fullProject = await getProjectById(projectId);
+      setProjects((prev) => [fullProject, ...removeById(prev, projectId)]);
+      localStorage.setItem("lastProjectId", projectId);
+
+      console.log(`✅ Project created: ${projectId}`);
+      return { projectId, project: fullProject };
+    } catch (err) {
+      console.error("❌ Failed to create project:", err);
+      throw err;
+    }
+  };
+
+  // ==========================================================
+  // ⚡ Optional Quick Flow: Create + Auto-Generate Scope
+  // ==========================================================
+  const createProjectWithScope = async (data) => {
+    try {
+      const { projectId } = await createProject(data);
+
+      // Auto generate scope
       const genRes = await projectApi.generateScope(projectId);
       const scope = genRes.data;
 
-      //  3. Generate export previews (JSON, Excel, PDF)
+      // Generate export previews
       const [jsonPreview, excelPreview, pdfPreview] = await Promise.all([
         exportApi.previewJson(projectId, scope),
         exportApi.previewExcel(projectId, scope),
         exportApi.previewPdf(projectId, scope),
       ]);
 
-      //  4. Refresh full project details (to include company & files)
-      const fullProject = await getProjectById(projectId);
-      setProjects((prev) => [fullProject, ...removeById(prev, projectId)]);
-
-      //  5. Cache last preview and redirect path
       setLastPreviewScope(jsonPreview || scope);
       setLastRedirectUrl(`/exports/${projectId}`);
-      localStorage.setItem("lastProjectId", projectId);
 
       return {
         projectId,
@@ -79,10 +92,11 @@ export const ProjectProvider = ({ children }) => {
         previews: { jsonPreview, excelPreview, pdfPreview },
       };
     } catch (err) {
-      console.error(" Failed to create project:", err);
+      console.error("❌ Failed to create project with scope:", err);
       throw err;
     }
   };
+
 
   const updateProject = async (id, data) => {
     const prev = projects;
@@ -151,15 +165,12 @@ export const ProjectProvider = ({ children }) => {
 
   const finalizeScope = async (id, scopeData) => {
     try {
-      //  1. Finalize on backend
       const res = await projectApi.finalizeScope(id, scopeData);
       const finalizedScope = res.data?.scope || scopeData;
 
-      //  2. Refresh project list
       const fullProject = await getProjectById(id);
       setProjects((cur) => replaceById(cur, id, fullProject));
 
-      //  3. Regenerate previews
       const [jsonPreview, excelPreview, pdfPreview] = await Promise.all([
         exportApi.previewJson(id, finalizedScope),
         exportApi.previewExcel(id, finalizedScope),
@@ -179,10 +190,96 @@ export const ProjectProvider = ({ children }) => {
     }
   };
 
+  // Clarified Flow: Generate & Update Questions + Refined Scope
+  const generateQuestions = async (id) => {
+    try {
+      const res = await projectApi.generateQuestions(id);
+
+      //  Handle both possible backend responses:
+      // Either returns { msg, questions: [...] } OR directly [ ... ]
+      const questions = Array.isArray(res.data)
+        ? res.data
+        : res.data?.questions || [];
+
+      console.log(
+        ` Generated ${questions.length} categorized questions for project ${id}`
+      );
+
+      return questions;
+    } catch (err) {
+      console.error(` Failed to generate questions for ${id}:`, err);
+      throw err;
+    }
+  };
+
+  const updateQuestions = async (projectId, answers) => {
+    try {
+      const res = await projectApi.updateQuestions(projectId, answers);
+      console.log(` Updated questions for project ${projectId}`);
+      return res.data;
+    } catch (err) {
+      console.error(` Failed to update questions for ${projectId}:`, err);
+      throw err;
+    }
+  };
+
+
+
+  // Use answered questions to generate refined scope
+  const generateRefinedScope = async (projectId, userAnswers = {}) => {
+    try {
+      //  Update the questions file with user answers
+      if (Object.keys(userAnswers || {}).length > 0) {
+        await projectApi.updateQuestions(projectId, userAnswers);
+      }
+
+      // Generate scope again (now enriched by Q&A)
+      const genRes = await projectApi.generateScope(projectId);
+      const scope = genRes.data;
+
+      //  Generate export previews
+      const [jsonPreview, excelPreview, pdfPreview] = await Promise.all([
+        exportApi.previewJson(projectId, scope),
+        exportApi.previewExcel(projectId, scope),
+        exportApi.previewPdf(projectId, scope),
+      ]);
+
+      // Cache preview & redirect path
+      setLastPreviewScope(jsonPreview || scope);
+      setLastRedirectUrl(`/exports/${projectId}`);
+
+      return {
+        projectId,
+        scope,
+        previews: { jsonPreview, excelPreview, pdfPreview },
+      };
+    } catch (err) {
+      console.error(` Failed to generate refined scope for ${projectId}:`, err);
+      throw err;
+    }
+  };
+
+  const getQuestions = async (id) => {
+    try {
+      const res = await projectApi.getQuestions(id);
+      const questions = res.data?.questions || [];
+      console.log(` Loaded ${questions.length} questions for project ${id}`);
+      return questions;
+    } catch (err) {
+      if (err?.response?.status === 404) {
+        console.warn(` No saved questions found for project ${id}`);
+        return [];
+      }
+      console.error(` Failed to fetch questions for ${id}:`, err);
+      throw err;
+    }
+  };
+
+
   const getFinalizedScope = async (id) => {
     try {
       const res = await projectApi.getFinalizedScope(id);
-      return res.data || null; // Backend returns `null` if not finalized
+      return res.data || null;
     } catch (err) {
       console.error(` Failed to fetch finalized scope for ${id}:`, err);
       throw err;
@@ -204,6 +301,11 @@ export const ProjectProvider = ({ children }) => {
         deleteProject,
         deleteAllProjects,
         regenerateScope,
+        generateQuestions,
+        getQuestions,
+        updateQuestions,
+        createProjectWithScope,
+        generateRefinedScope,
         finalizeScope,
         getFinalizedScope,
         setLastPreviewScope,

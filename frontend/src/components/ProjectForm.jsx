@@ -8,7 +8,7 @@ import { toast } from "react-toastify";
 
 export default function ProjectForm({ onSubmit }) {
   const navigate = useNavigate();
-  const { createProject } = useProjects();
+  const { createProject, createProjectWithScope, generateQuestions, generateRefinedScope, updateQuestions } = useProjects();
   const { companies, selectedCompany, setSelectedCompany, loadCompanies } = useRateCards();
 
   useEffect(() => {
@@ -113,9 +113,20 @@ export default function ProjectForm({ onSubmit }) {
     files: [],
   });
 
-  const [loading, setLoading] = useState(false);
+  const [scopeLoading, setScopeLoading] = useState(false);
+  const [questionLoading, setQuestionLoading] = useState(false);
+  const [saveLoading, setSaveLoading] = useState(false);
+  const [answerLoading, setAnswerLoading] = useState(false);
+  const [refineLoading, setRefineLoading] = useState(false);
   const [validationErrors, setValidationErrors] = useState({});
   const [recommended, setRecommended] = useState([]);
+  // 🔹 Questions state
+  const [questions, setQuestions] = useState([]);
+  const [showQuestions, setShowQuestions] = useState(false);
+  const [projectId, setProjectId] = useState(null);
+  const [answersSaved, setAnswersSaved] = useState(false);
+
+
 
   useEffect(() => {
     setRecommended(recommendForDomain(form.domain));
@@ -212,17 +223,9 @@ export default function ProjectForm({ onSubmit }) {
   const handleRemoveFile = (index) =>
     setForm((prev) => ({ ...prev, files: prev.files.filter((_, i) => i !== index) }));
 
-  // Submit
-  const handleSubmit = async (e) => {
+  // Generate Scope (Quick Flow)
+  const handleGenerateScope = async (e) => {
     e.preventDefault();
-
-    const newErrors = {};
-    Object.keys(form).forEach((field) => {
-      if (field !== "files") {
-        const msg = validateField(field, form[field]);
-        if (msg) newErrors[field] = msg;
-      }
-    });
 
     const hasAtLeastOne =
       Object.entries(form).some(([key, value]) => {
@@ -236,25 +239,16 @@ export default function ProjectForm({ onSubmit }) {
       return;
     }
 
-    setValidationErrors(newErrors);
-    if (Object.keys(newErrors).length > 0) {
-      toast.error("Please fix the highlighted errors.");
-      return;
-    }
-
-    setLoading(true);
+    setScopeLoading(true);
     try {
       const payload = { ...form, company_id: selectedCompany || undefined };
-      const { projectId, scope, redirectUrl } = await createProject(payload);
+      const { projectId, scope, redirectUrl } = await createProjectWithScope(payload);
 
       if (onSubmit) onSubmit({ project_id: projectId, scope, redirect_url: redirectUrl });
 
-      if (scope) {
-        navigate(`/exports/${projectId}`, { state: { draftScope: scope } });
-      } else {
-        navigate(`/exports/${projectId}`);
-      }
+      navigate(`/exports/${projectId}`, { state: { draftScope: scope } });
 
+      toast.success("Scope generated successfully!");
       setForm({
         name: "",
         domain: "",
@@ -267,17 +261,103 @@ export default function ProjectForm({ onSubmit }) {
       });
       setValidationErrors({});
     } catch (err) {
-      console.error("Failed to create project:", err);
-      toast.error("Failed to create and scope project.");
+      console.error(" Failed to generate scope:", err);
+      toast.error("Failed to generate project scope.");
     } finally {
-      setLoading(false);
+      setScopeLoading(false);
     }
   };
 
 
+
+  //  Generate Questions from RFP
+  const handleGenerateQuestions = async () => {
+    if (!form.files.length) {
+      toast.error("Please upload at least one RFP file first!");
+      return;
+    }
+
+    try {
+      setQuestionLoading(true);
+      const payload = { ...form, company_id: selectedCompany || undefined };
+
+      // create project first
+      const { projectId } = await createProject(payload);
+      setProjectId(projectId);
+
+      // Trigger questions generation
+      const res = await generateQuestions(projectId);
+
+      const questions = Array.isArray(res)
+        ? res
+        : res?.questions || res?.data || [];
+
+      if (!questions.length) throw new Error("No questions returned");
+
+      setQuestions(questions);
+      setShowQuestions(true);
+      toast.success("Questions generated successfully!");
+
+    } catch (err) {
+      console.error(" Failed to generate questions:", err);
+      toast.error("Failed to generate questions.");
+    } finally {
+      setQuestionLoading(false);
+    }
+  };
+
+  const handleQuestionChange = (catIndex, qIndex, field, value) => {
+    setQuestions((prev) =>
+      prev.map((cat, ci) =>
+        ci === catIndex
+          ? {
+              ...cat,
+              items: cat.items.map((q, qi) =>
+                qi === qIndex ? { ...q, [field]: value } : q
+              ),
+            }
+          : cat
+      )
+    );
+
+    setAnswersSaved(false);
+  };
+
+
+  const handleSaveAnswers = async () => {
+    if (!projectId) {
+      toast.error("Generate questions first!");
+      return;
+    }
+
+    try {
+      setSaveLoading(true);
+      const formattedAnswers = {};
+      for (const cat of questions) {
+        formattedAnswers[cat.category] = {};
+        for (const q of cat.items) {
+          formattedAnswers[cat.category][q.question] = q.user_understanding || "";
+        }
+      }
+
+      await updateQuestions(projectId, formattedAnswers);
+      toast.success("Saved successfully!");
+      setAnswersSaved(true);
+    } catch (err) {
+      console.error("Save answers failed:", err);
+      toast.error("Failed to save answers.");
+      setSaveLoading(false);
+    } finally {
+      setSaveLoading(false);
+    }
+  };
+
+
+
+
   return (
     <form
-      onSubmit={handleSubmit}
+      onSubmit={handleGenerateScope}
       className="w-full max-w-7xl mx-auto space-y-6 bg-white dark:bg-dark-card p-6 rounded-xl shadow-md border border-gray-200 dark:border-dark-muted"
     >
 
@@ -552,7 +632,6 @@ export default function ProjectForm({ onSubmit }) {
           <span className="text-gray-500">Drag & Drop files here</span>
         </label>
       </div>
-
       {/* File List */}
       {form.files.length > 0 && (
         <ul className="mt-3 space-y-2">
@@ -576,15 +655,184 @@ export default function ProjectForm({ onSubmit }) {
           ))}
         </ul>
       )}
+      {/* Generate Questions Button */}
+      <button
+        type="button"
+        onClick={handleGenerateQuestions}
+        disabled={questionLoading}
+        className="w-full flex items-center justify-center bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg shadow font-semibold transition disabled:opacity-50"
+      >
+        {questionLoading ? (
+          <>
+            <svg
+              className="animate-spin h-5 w-5 mr-2 text-white"
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+            >
+              <circle
+                className="opacity-25"
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                strokeWidth="4"
+              />
+              <path
+                className="opacity-75"
+                fill="currentColor"
+                d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
+              />
+            </svg>
+            Generating Questions...
+          </>
+        ) : (
+          "Generate Questions from RFP"
+        )}
+      </button>
+
+
+
+      {/* Editable Questions Table */}
+      {showQuestions && questions.length > 0 && (
+        <div className="mt-10">
+          <h2 className="text-xl font-semibold mb-4"> Questions from RFP</h2>
+
+          <div className="overflow-x-auto border rounded-lg">
+            <table className="min-w-full text-sm">
+              <thead className="bg-gray-100">
+                <tr>
+                  <th className="p-2 text-left">Category</th>
+                  <th className="p-2 text-left">Question</th>
+                  <th className="p-2 text-left">User Understanding</th>
+                  <th className="p-2 text-left">Comment</th>
+                </tr>
+              </thead>
+              <tbody>
+                {questions.map((cat, ci) =>
+                  cat.items.map((q, qi) => (
+                    <tr key={`${ci}-${qi}`} className="border-t hover:bg-gray-50">
+                      {qi === 0 && (
+                        <td
+                          rowSpan={cat.items.length}
+                          className="p-2 font-semibold align-top bg-gray-50"
+                        >
+                          {cat.category}
+                        </td>
+                      )}
+                      <td className="p-2">{q.question}</td>
+                      <td className="p-2">
+                        <input
+                          type="text"
+                          value={q.user_understanding || ""}
+                          onChange={(e) =>
+                            handleQuestionChange(ci, qi, "user_understanding", e.target.value)
+                          }
+                          className="border px-2 py-1 rounded w-full"
+                          placeholder="Enter your understanding..."
+                        />
+                      </td>
+                      <td className="p-2">
+                        <input
+                          type="text"
+                          value={q.comment || ""}
+                          onChange={(e) =>
+                            handleQuestionChange(ci, qi, "comment", e.target.value)
+                          }
+                          className="border px-2 py-1 rounded w-full"
+                          placeholder="Add comment..."
+                        />
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {/*  Save Answers Button */}
+          <div className="mt-4 flex justify-end">
+            <button
+              type="button"
+              onClick={handleSaveAnswers}
+              disabled={saveLoading}
+              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg shadow font-semibold transition disabled:opacity-50"
+            >
+              {saveLoading ? "Saving..." : " Save Answers"}
+            </button>
+            <button
+              type="button"
+              onClick={async () => {
+                if (!projectId) {
+                  toast.error("Generate questions first!");
+                  return;
+                }
+                try {
+                  setRefineLoading(true);
+                  const formattedAnswers = {};
+                  for (const cat of questions) {
+                    formattedAnswers[cat.category] = {};
+                    for (const q of cat.items) {
+                      formattedAnswers[cat.category][q.question] = q.user_understanding || "";
+                    }
+                  }
+
+                  await generateRefinedScope(projectId, formattedAnswers);
+                  toast.success("Refined scope generated successfully!");
+                  navigate(`/exports/${projectId}`);
+                } catch (err) {
+                  console.error("Failed to generate refined scope:", err);
+                  toast.error("Failed to generate refined scope.");
+                } finally {
+                  setRefineLoading(false);
+                }
+              }}
+              disabled={refineLoading || !answersSaved}
+              className={`ml-3 flex items-center gap-2 ${
+                answersSaved ? "bg-green-600 hover:bg-green-700" : "bg-gray-400 cursor-not-allowed"
+              } text-white px-4 py-2 rounded-lg shadow font-semibold transition`}
+            >
+              {refineLoading ? (
+                <>
+                  <svg
+                    className="animate-spin h-5 w-5 mr-2 text-white"
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                  >
+                    <circle
+                      className="opacity-25"
+                      cx="12"
+                      cy="12"
+                      r="10"
+                      stroke="currentColor"
+                      strokeWidth="4"
+                    />
+                    <path
+                      className="opacity-75"
+                      fill="currentColor"
+                      d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
+                    />
+                  </svg>
+                  Generating Refined Scope...
+                </>
+              ) : (
+                "Generate Refined Scope"
+              )}
+            </button>
+
+          </div>
+        </div>
+      )}
 
       
       {/* Submit */}
       <button
         type="submit"
-        disabled={loading}
+        disabled={scopeLoading}
         className="w-full flex items-center justify-center bg-primary hover:bg-secondary text-white px-4 py-2 rounded-lg shadow font-semibold transition disabled:opacity-50"
       >
-        {loading ? (
+        {scopeLoading ? (
           <>
             <svg
               className="animate-spin h-5 w-5 mr-2 text-white"

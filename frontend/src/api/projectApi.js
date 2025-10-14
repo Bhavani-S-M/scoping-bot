@@ -71,6 +71,17 @@ const projectApi = {
     api.post(`/projects/${id}/regenerate_scope`, payload, {
       headers: { "Content-Type": "application/json" },
     }),
+  generateQuestions: (id) =>
+    api.post(`/projects/${id}/generate_questions`),
+
+  updateQuestions: (id, answers) =>
+    api.post(`/projects/${id}/update_questions`, answers, {
+      headers: { "Content-Type": "application/json" },
+    }),
+
+  getQuestions: (id) =>
+  api.get(`/projects/${id}/questions`),
+
 
   getFinalizedScope: (id, { signal } = {}) =>
     api.get(`/projects/${id}/finalized_scope`, { signal }),
