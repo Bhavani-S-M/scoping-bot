@@ -284,7 +284,7 @@ def _rag_retrieve(query: str, k: int = 3, expand_neighbors: bool = True) -> List
 
 
 # ---------- Prompt ----------
-def _build_scope_prompt(rfp_text: str, kb_chunks: List[str], project=None, model_name: str = "gpt-4o") -> str:
+def _build_scope_prompt(rfp_text: str, kb_chunks: List[str], project=None, model_name: str = "gpt-4o", questions_context: str | None = None) -> str:
     import datetime, tiktoken
 
     # Tokenizer
@@ -371,28 +371,30 @@ def _build_scope_prompt(rfp_text: str, kb_chunks: List[str], project=None, model
         f"-Rules:\n"
         f"- The first activity must always start today ({today_str}).\n"
         "- **Allow maximum parallel execution**: activities with no dependency must overlap instead of running sequentially."
-        "- Use dependencies only when necessary (e.g., testing depends on development)."
         "- Project duration must always be **under 12 months**.\n"
         "- Auto-calculate **End Date = Start Date + Effort Months**.\n"
         "- Auto-calculate **overview.Duration** as the total span in months from the earliest Start Date to the latest End Date.\n"
-        "- `Complexity` should be simple, medium, or large.\n"
+        "- `Complexity` should be simple, medium, or large based on duration of project.\n"
         "- **Always assign at least one Resource**."
         "- Distinguish `Owner` (responsible lead role) and `Resources` (supporting roles)."
         "- `Owner` and `Resources` must be valid IT roles (e.g., Backend Developer, AI Engineer, QA Engineer, etc.)."
         "- `Owner` is always a role who manages that particular activity (not a personal name).\n"
         "- `Resources` must contain only roles which are required for that particular activity, distinct from `Owner`.\n"
         "- If `Resources` is missing, fallback to the same `Owner` role.\n"
-        "- Use less activities and resources as much as possible.\n"
-        "- Effort Months should be small integers 0.5 to 2 months not more than this.\n"
+        "- Use less resources as much as possible.\n"
+        "- Effort Months should be small integers 0.5 to 1.5 months not more than this.\n"
         "- IDs must start from 1 and increment sequentially.\n"
-        "- Use USD for all rates.\n"
-        "- If the RFP or KB text lacks detail, infer the missing pieces logically."
+        "- If the RFP or Knowledge Base text lacks detail, infer the missing pieces logically."
         "- Include all relevant roles and activities that ensure delivery of the project scope."
         "- Keep all field names exactly as in the schema.\n"
 
         f"{user_context}"
         f"RFP / Project Files Content:\n{rfp_text}\n\n"
         f"Knowledge Base Context (for enrichment only):\n{kb_context}\n"
+        f"Clarification Q&A (User-confirmed answers take highest priority)\n"
+        f"Use these answers to override or clarify any ambiguous or conflicting information.\n"
+        f"Do NOT hallucinate beyond these facts.\n\n"
+        f"{questions_context}\n"
     )
 def _build_questionnaire_prompt(rfp_text: str, kb_chunks: List[str], project=None) -> str:
     """
@@ -1319,30 +1321,42 @@ async def generate_project_scope(db: AsyncSession, project) -> dict:
     logger.info(
         f"Final RFP tokens: {len(rfp_tokens)}, KB tokens: {used_tokens - len(rfp_tokens)}, Total: {used_tokens}/{max_total_tokens}"
     )
-    # ---------- Load questions.json (if exists) and include user answers ----------
+
+    # ---------- Load questions.json (if exists) and build Q&A context ----------
+    questions_context = None
     try:
         q_blob_name = f"{PROJECTS_BASE}/{project.id}/questions.json"
         if await azure_blob.blob_exists(q_blob_name):
             q_bytes = await azure_blob.download_bytes(q_blob_name)
             q_json = json.loads(q_bytes.decode("utf-8"))
-            question_context = []
-            for cat in q_json.get("questions", []):
-                question_context.append(f"### {cat.get('category', 'General')}")
-                for item in cat.get("items", []):
-                    q = item.get("question", "")
-                    a = item.get("user_understanding", "")
-                    question_context.append(f"Q: {q}\nA: {a or '(unanswered)'}")
-            question_text = "\n".join(question_context)
-            rfp_text += f"\n\n---\n## Clarification Questions and Answers\n{question_text}"
-            logger.info(f"✅ Included questions.json context for project {project.id}")
+
+            q_lines = []
+            for category in q_json.get("questions", []):
+                cat_name = category.get("category", "General")
+                q_lines.append(f"### {cat_name}")
+                for item in category.get("items", []):
+                    q = item.get("question", "").strip()
+                    a = item.get("user_understanding", "").strip() or "(unanswered)"
+                    comment = item.get("comment", "").strip()
+                    line = f"Q: {q}\nA: {a}"
+                    if comment:
+                        line += f"\nComment: {comment}"
+                    q_lines.append(line)
+
+            questions_context = "\n".join(q_lines)
+            logger.info(f"✅ Loaded {len(q_lines)} question lines for project {project.id}")
         else:
-            logger.info(f"ℹ️ No questions.json found for project {project.id}, skipping.")
+            logger.info(f"ℹ️ No questions.json found for project {project.id}, skipping Q&A context.")
+
     except Exception as e:
         logger.warning(f"⚠️ Could not include questions.json context: {e}")
+        questions_context = None
+
+    
 
 
     # ---------- Build + query ----------
-    prompt = _build_scope_prompt(rfp_text, kb_chunks, project, model_name=model_name)
+    prompt = _build_scope_prompt(rfp_text, kb_chunks, project, model_name=model_name, questions_context=questions_context)
 
     try:
         # Step 1: Generate scope via Azure OpenAI
@@ -1396,28 +1410,28 @@ async def generate_project_scope(db: AsyncSession, project) -> dict:
             )
             old_file = result.scalars().first()
             if old_file:
-                try:
-                    await db.delete(old_file)
-                    await db.commit()
-                except Exception as e:
-                    logger.warning(f"Failed to delete old finalized_scope.json: {e}")
+                logger.info(f"♻️ Overwriting existing finalized_scope.json for project {project.id}")
+            else:
+                old_file = models.ProjectFile(
+                    project_id=project.id,
+                    file_name="finalized_scope.json",
+                )
 
             blob_name = f"{PROJECTS_BASE}/{project.id}/finalized_scope.json"
+
             await azure_blob.upload_bytes(
                 json.dumps(cleaned_scope, ensure_ascii=False, indent=2).encode("utf-8"),
                 blob_name,
+                overwrite=True,  # ✅ crucial: replace atomically in Blob Storage
             )
 
-            db_file = models.ProjectFile(
-                project_id=project.id,
-                file_name="finalized_scope.json",
-                file_path=blob_name,
-            )
-            db.add(db_file)
+            old_file.file_path = blob_name
+            db.add(old_file)
             await db.commit()
-            await db.refresh(db_file)
+            await db.refresh(old_file)
 
-            logger.info(f" Auto-saved finalized_scope.json for project {project.id}")
+            logger.info(f"✅ finalized_scope.json overwritten for project {project.id}")
+
         except Exception as e:
             logger.warning(f" Failed to auto-save finalized_scope.json: {e}")
         return cleaned_scope
@@ -1427,55 +1441,118 @@ async def generate_project_scope(db: AsyncSession, project) -> dict:
         return {}
 
 
-
-
-
-async def regenerate_from_instructions(draft: dict, instructions: str) -> dict:
+async def regenerate_from_instructions(
+    db: AsyncSession,
+    project: models.Project,
+    draft: dict,
+    instructions: str
+) -> dict:
     """
-    If instructions are provided → call Azure OpenAI to regenerate.
-    If no instructions → just clean the draft.
+    Regenerate the project scope from user instructions using a creative AI-guided prompt.
+    Enhances activity sequencing, roles, and effort estimates while preserving valid JSON structure.
     """
+    logger.info(f"🔁 Regenerating scope for project {project.id} with creative AI response...")
+
     if not instructions or not instructions.strip():
-        return await clean_scope(None, draft)
-
+        cleaned = await clean_scope(db, draft, project=project)
+        return {**cleaned, "_finalized": True}
 
     if client is None or deployment is None:
-        logger.warning("Azure OpenAI not configured")
-        return await clean_scope(None, draft)
+        logger.warning("Azure OpenAI not configured; skipping creative regeneration")
+        cleaned = await clean_scope(db, draft, project=project)
+        return {**cleaned, "_finalized": True}
 
+    # ---- Build creative instruction-aware prompt ----
     prompt = f"""
-You are a project scoping assistant.
-You are given the current draft JSON scope and user instructions.
-Update the JSON accordingly while keeping valid JSON structure.
+You are an **expert AI project planner and delivery architect**.
+You are given:
+1️⃣ The current draft project scope (in JSON).
+2️⃣ The user’s specific change instructions.
 
-Instructions:
+You must:
+- Understand the intent behind the instructions (they may be natural language).
+- Modify the draft scope accordingly — you may add, remove, or reorder activities, adjust timelines,
+  change resources, or update descriptions to reflect the requested changes.
+- You can creatively infer missing dependencies or sequencing logic.
+- Preserve all schema keys exactly as before (overview, activities, resourcing_plan).
+- All dates must remain valid ISO `yyyy-mm-dd`.
+- Keep project duration under 12 months and maximize parallel execution.
+- Use realistic IT roles (Backend Developer, Data Engineer, QA Analyst, etc.).
+- Always return **only valid JSON**.
+
+If the user requests improvements (e.g., "optimize resourcing", "simplify timeline", "add data validation phase"),
+you must reflect those explicitly in the output.
+
+User Instructions:
 {instructions}
 
-Draft Scope (JSON):
-{json.dumps(draft, indent=2)}
+Current Draft Scope (JSON):
+{json.dumps(draft, indent=2, ensure_ascii=False)}
 
-Return ONLY valid JSON.
+Return ONLY valid JSON with updated overview, activities, and resourcing_plan.
 """
 
+    # ---- Query Azure OpenAI creatively ----
     try:
         resp = await anyio.to_thread.run_sync(
             lambda: client.chat.completions.create(
                 model=deployment,
                 messages=[
-                    {"role": "system", "content": "You are a strict JSON generator."},
+                    {"role": "system", "content": "You are a creative yet precise project scoping expert."},
                     {"role": "user", "content": prompt},
                 ],
-                temperature=0.3,
+                temperature=0.6,  # a bit higher for creative diversity
             )
         )
 
         raw_text = resp.choices[0].message.content.strip()
-        updated = _extract_json(raw_text)
-        return  await clean_scope(None, updated)
+        updated_scope = _extract_json(raw_text)
+        cleaned = await clean_scope(db, updated_scope, project=project)
 
     except Exception as e:
-        logger.error(f"Regeneration failed: {e}")
-        return await clean_scope(None, draft)
+        logger.error(f"⚠️ Creative regeneration failed: {e}")
+        cleaned = await clean_scope(db, draft, project=project)
+
+    # ---- Update project metadata from overview ----
+    overview = cleaned.get("overview", {})
+    if overview:
+        project.name = overview.get("Project Name") or project.name
+        project.domain = overview.get("Domain") or project.domain
+        project.complexity = overview.get("Complexity") or project.complexity
+        project.tech_stack = overview.get("Tech Stack") or project.tech_stack
+        project.use_cases = overview.get("Use Cases") or project.use_cases
+        project.compliance = overview.get("Compliance") or project.compliance
+        project.duration = str(overview.get("Duration") or project.duration)
+        await db.commit()
+        await db.refresh(project)
+        logger.info(f"✅ Project metadata synced for project {project.id}")
+
+    # ---- Overwrite finalized_scope.json in Blob ----
+    result = await db.execute(
+        select(models.ProjectFile).filter(
+            models.ProjectFile.project_id == project.id,
+            models.ProjectFile.file_name == "finalized_scope.json",
+        )
+    )
+    old_file = result.scalars().first() or models.ProjectFile(
+        project_id=project.id, file_name="finalized_scope.json"
+    )
+
+    blob_name = f"{PROJECTS_BASE}/{project.id}/finalized_scope.json"
+    await azure_blob.upload_bytes(
+        json.dumps(cleaned, ensure_ascii=False, indent=2).encode("utf-8"),
+        blob_name,
+        overwrite=True,
+    )
+    old_file.file_path = blob_name
+    db.add(old_file)
+    await db.commit()
+    await db.refresh(old_file)
+
+    logger.info(f"✅ Creative finalized_scope.json regenerated for project {project.id}")
+    return {**cleaned, "_finalized": True}
+
+
 
 
 async def finalize_scope(
@@ -1530,28 +1607,24 @@ async def finalize_scope(
     )
     old_file = result.scalars().first()
     if old_file:
-        try:
-            await db.delete(old_file)
-            await db.commit()
-        except Exception as e:
-            logger.warning(f" Failed to delete old finalized_scope.json: {e}")
+        logger.info(f"♻️ Overwriting existing finalized_scope.json for project {project_id}")
+    else:
+        old_file = models.ProjectFile(
+            project_id=project_id,
+            file_name="finalized_scope.json",
+        )
 
-    # ---- Upload new finalized scope ----
     blob_name = f"{PROJECTS_BASE}/{project_id}/finalized_scope.json"
     await azure_blob.upload_bytes(
         json.dumps(cleaned, ensure_ascii=False, indent=2).encode("utf-8"),
-        blob_name
+        blob_name,
+        overwrite=True,
     )
 
-    db_file = models.ProjectFile(
-        project_id=project_id,
-        file_name="finalized_scope.json",
-        file_path=blob_name,
-    )
-    db.add(db_file)
+    old_file.file_path = blob_name
+    db.add(old_file)
     await db.commit()
-    await db.refresh(db_file)
+    await db.refresh(old_file)
 
-    logger.info(f" Finalized scope stored for project {project_id}")
-    return db_file, {**cleaned, "_finalized": True}
-
+    logger.info(f"✅ Finalized scope overwritten for project {project_id}")
+    return old_file, {**cleaned, "_finalized": True}

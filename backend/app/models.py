@@ -186,29 +186,39 @@ class ProjectFile(Base):
 
 @event.listens_for(Project, "after_delete")
 def delete_project_folder(mapper, connection, target):
-    """Delete all blobs under the project's folder."""
+    """Delete all blobs under the project's folder (safe + explicit)."""
     try:
         from app.utils import azure_blob
         prefix = f"projects/{target.id}/"
 
-        # Fire-and-forget cleanup
-        azure_blob.safe_delete_blob(prefix)
+        # ✅ Explicitly call delete_folder instead of safe_delete_blob
+        # This ensures folder deletion only when a project is truly deleted
+        import asyncio
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(azure_blob.delete_folder(prefix))
+        except RuntimeError:
+            asyncio.run(azure_blob.delete_folder(prefix))
 
-        # Mark this project as cleaned to avoid duplicate file deletions
+        # mark so individual files won’t be deleted again
         setattr(target, "_blob_folder_deleted", True)
 
     except Exception as e:
-        print(f" [Project] Failed to cleanup folder {prefix}: {e}")
+        print(f"[Project] Failed to cleanup folder {prefix}: {e}")
 
 
 @event.listens_for(ProjectFile, "after_delete")
 def delete_blob_after_file_delete(mapper, connection, target):
-    """Delete individual blob file unless folder cleanup already triggered."""
+    """Delete single blob only if it’s not part of a project folder deletion."""
     try:
+        # ✅ Skip if the parent project was just deleted
         if getattr(getattr(target, "project", None), "_blob_folder_deleted", False):
-            return  # Folder deletion will handle this
-        if target.file_path:
+            return
+
+        # ✅ Delete only files with extension (not folders)
+        if target.file_path and "." in target.file_path:
             from app.utils import azure_blob
             azure_blob.safe_delete_blob(target.file_path)
+
     except Exception as e:
-        print(f" [File] Failed to delete blob {getattr(target, 'file_path', None)}: {e}")
+        print(f"[File] Failed to delete blob {getattr(target, 'file_path', None)}: {e}")

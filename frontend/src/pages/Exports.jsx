@@ -51,8 +51,8 @@ export default function Exports() {
   const { id } = useParams();
   const location = useLocation();
   const mode = new URLSearchParams(location.search).get("mode");
-  const { finalizeScope, getFinalizedScope } = useProjects();
-  const { previewPdf, getPdfBlob, regenerateScope } = useExport();
+  const { finalizeScope, getFinalizedScope, regenerateScope } = useProjects();
+  const { previewPdf, getPdfBlob } = useExport();
   const [finalizing, setFinalizing] = useState(false);
 
   const incomingDraft = location.state?.draftScope || null;
@@ -139,26 +139,36 @@ export default function Exports() {
     }
   };
 
-
   const handleRegenerate = async () => {
-    if (!parsedDraft || !regenPrompt.trim()) return;
+    if (!parsedDraft || !regenPrompt.trim()) {
+      toast.info("Please enter regeneration instructions first.");
+      return;
+    }
+
     try {
       setRegenLoading(true);
+      toast.info("Regenerating scope… this may take a few seconds");
 
-      // Correct usage: pass id, draft, and instructions separately
-      const updated = await regenerateScope(id, parsedDraft, regenPrompt);
+      const result = await regenerateScope(id, parsedDraft, regenPrompt);
 
-      setJsonText(JSON.stringify(updated, null, 2));
-      setIsFinalized(false);
-
-      setRegenPrompt("");
+      if (result?.scope) {
+        setJsonText(JSON.stringify(result.scope, null, 2));
+        setIsFinalized(false);
+        setRegenPrompt("");
+        toast.success("✅ Scope regenerated successfully!");
+      } else {
+        toast.warn("No changes were made to the scope.");
+      }
     } catch (err) {
+      console.error("Regeneration failed:", err);
       toast.error("Failed to regenerate scope");
-      console.error(err);
     } finally {
       setRegenLoading(false);
     }
   };
+
+
+
 
 
 

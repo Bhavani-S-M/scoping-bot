@@ -40,11 +40,28 @@ def _normalize_path(blob_name: str, base: str) -> str:
 
 
 # Upload
-async def upload_bytes(data: Union[bytes, bytearray], blob_name: str, base: str = "") -> str:
+async def upload_bytes(
+    data: Union[bytes, bytearray],
+    blob_name: str,
+    base: str = "",
+    overwrite: bool = True
+) -> str:
     path = _normalize_path(blob_name, base)
     blob = container.get_blob_client(path)
-    await blob.upload_blob(data, overwrite=True)
-    return path
+
+    for attempt in range(3):
+        try:
+            await blob.upload_blob(data, overwrite=overwrite)
+            return path
+        except Exception as e:
+            # Azure may briefly reject upload if the blob was just deleted
+            if attempt < 2:
+                print(f" Upload retry {attempt+1}/3 for {path}: {e}")
+                await anyio.sleep(1.0)
+                continue
+            print(f" Upload failed permanently for {path}: {e}")
+            raise
+
 
 async def upload_file(path: str, blob_name: str, base: str = "") -> str:
     with open(path, "rb") as f:
@@ -161,19 +178,20 @@ async def delete_folder(prefix: str, base: str = "") -> List[str]:
 
 async def delete_blob_async(blob_path: str) -> bool:
     """
-    Delete a single blob or an entire folder recursively.
-    Safe to call from any async context.
+    Delete only the specific blob provided.
+    Never recursively delete a folder unless explicitly called by delete_folder().
     """
     try:
-        # Folder delete
-        if blob_path.endswith("/") or "." not in blob_path:
-            await delete_folder(blob_path)
-            return True
-        # Single file delete
+        # 🛡️ Prevent accidental folder deletions
+        if blob_path.endswith("/") or blob_path.count(".") == 0:
+            print(f"⚠️ Skipping recursive folder deletion for safety: {blob_path}")
+            return False
+
         return await delete_blob(blob_path)
     except Exception as e:
-        print(f" Failed async delete for {blob_path}: {e}")
+        print(f"❌ Failed async delete for {blob_path}: {e}")
         return False
+
 
 
 def delete_blob_sync(blob_path: str):
@@ -195,11 +213,14 @@ def delete_blob_sync(blob_path: str):
 
 def safe_delete_blob(blob_path: str):
     """
-    Non-blocking helper for fire-and-forget cleanup tasks.
-    If inside an active loop → schedules background task.
-    If outside → runs synchronously.
+    Fire-and-forget blob delete — now protected against folder wipes.
     """
     try:
+        # 🛡️ Prevent unsafe deletions of project folders
+        if blob_path.endswith("/") or blob_path.count(".") == 0:
+            print(f"⚠️ Ignoring unsafe folder delete request: {blob_path}")
+            return
+
         loop = asyncio.get_running_loop()
         loop.create_task(delete_blob_async(blob_path))
     except RuntimeError:

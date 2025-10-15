@@ -227,34 +227,55 @@ async def get_finalized_scope(
         logger.error(f"Failed to fetch finalized scope: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch finalized scope")
 
-
-
-# Regenerate Scope
+# ==========================================================
+# 🔁 Regenerate Scope with User Instructions
+# ==========================================================
 @router.post("/{project_id}/regenerate_scope", response_model=schemas.GeneratedScopeResponse)
 async def regenerate_scope_with_instructions(
     project_id: uuid.UUID,
-    payload: Dict[str, Any],
+    request: schemas.RegenerateScopeRequest,   # ✅ use schema instead of Dict
     db: AsyncSession = Depends(get_async_session),
     current_user: models.User = Depends(get_current_active_user),
 ):
+    """
+    Regenerate a project's scope based on user-provided instructions.
+    Overwrites finalized_scope.json in Azure Blob + updates DB metadata.
+    """
+    # ✅ Step 1: Validate project
     db_project = await projects.get_project(db, project_id=project_id, owner_id=current_user.id)
     if not db_project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    draft = payload.get("draft")
-    instructions = payload.get("instructions", "")
+    # ✅ Step 2: Extract data from request model
+    draft = request.draft
+    instructions = request.instructions or ""
 
     if not draft:
-        raise HTTPException(status_code=400, detail="Missing draft scope")
+        raise HTTPException(status_code=400, detail="Missing draft scope payload")
 
+    # ✅ Step 3: Regenerate
     try:
-        logger.info(f"Regenerating scope for project {project_id} with user instructions...")
-        regen_scope = await scope_engine.regenerate_from_instructions(draft, instructions) or {}
-        return schemas.GeneratedScopeResponse(**regen_scope)
+        logger.info(f"Regenerating scope for project {project_id} with instructions: {instructions[:120]}...")
+        regen_scope = await scope_engine.regenerate_from_instructions(
+            db=db,
+            project=db_project,
+            draft=draft,
+            instructions=instructions,
+        )
+
+        # ✅ Step 4: Return structured response
+        return schemas.GeneratedScopeResponse(
+            overview=regen_scope.get("overview", {}),
+            activities=regen_scope.get("activities", []),
+            resourcing_plan=regen_scope.get("resourcing_plan", []),
+            architecture_diagram=regen_scope.get("architecture_diagram", None),
+        )
+
     except Exception as e:
         logger.error(f"Scope regeneration failed for {project_id}: {e}")
         raise HTTPException(status_code=500, detail="Scope regeneration failed")
     
+
 @router.post(
     "/{project_id}/generate_questions",
     response_model=schemas.GenerateQuestionsResponse
@@ -281,6 +302,7 @@ async def generate_project_questions_route(
     except Exception as e:
         logger.error(f"Question generation failed for {project_id}: {e}")
         raise HTTPException(status_code=500, detail="Question generation failed")
+
 
 # ==========================================================
 # 🧠 Update Project Questions with User Input

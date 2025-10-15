@@ -1,7 +1,6 @@
 // src/api/projectApi.js
 import api from "./axiosClient";
 
-// Helper: Append only non-empty values
 const appendIfPresent = (formData, key, value) => {
   if (value === undefined || value === null) return;
   const v = typeof value === "string" ? value.trim() : value;
@@ -11,14 +10,12 @@ const appendIfPresent = (formData, key, value) => {
 };
 
 const projectApi = {
-  getProjects: () => api.get("/projects"),
+  getProjects: ({ signal } = {}) => api.get("/projects", { signal }),
 
-  getProject: (id) => api.get(`/projects/${id}`),
+  getProject: (id, { signal } = {}) => api.get(`/projects/${id}`, { signal }),
 
   createProject: (data) => {
     const formData = new FormData();
-
-    // Basic fields
     appendIfPresent(formData, "name", data.name);
     appendIfPresent(formData, "domain", data.domain);
     appendIfPresent(formData, "complexity", data.complexity);
@@ -26,17 +23,14 @@ const projectApi = {
     appendIfPresent(formData, "use_cases", data.use_cases);
     appendIfPresent(formData, "duration", data.duration);
 
-    // Compliance: allow multiple values
     if (Array.isArray(data.compliance)) {
       data.compliance.forEach((c) => formData.append("compliance", c));
     } else {
       appendIfPresent(formData, "compliance", data.compliance);
     }
 
-    //  Company selection (important for multi-tenant ratecards)
     appendIfPresent(formData, "company_id", data.company_id);
 
-    // Attach files if any
     if (Array.isArray(data.files) && data.files.length > 0) {
       data.files.forEach((item) => {
         const fileObj = item?.file || item;
@@ -60,17 +54,21 @@ const projectApi = {
 
   deleteAllProjects: () => api.delete("/projects"),
 
-  generateScope: (id) => api.get(`/projects/${id}/generate_scope`),
+  generateScope: (id, { signal } = {}) =>
+    api.get(`/projects/${id}/generate_scope`, { signal }),
 
-  finalizeScope: (id, scopeData) =>
+  finalizeScope: (id, scopeData, { signal } = {}) =>
     api.post(`/projects/${id}/finalize_scope`, scopeData, {
       headers: { "Content-Type": "application/json" },
+      signal,
     }),
 
-  regenerateScope: (id, payload) =>
-    api.post(`/projects/${id}/regenerate_scope`, payload, {
+  regenerateScope: (id, data, { signal } = {}) =>
+    api.post(`/projects/${id}/regenerate_scope`, data, {
       headers: { "Content-Type": "application/json" },
+      signal,
     }),
+
   generateQuestions: (id) =>
     api.post(`/projects/${id}/generate_questions`),
 
@@ -79,9 +77,7 @@ const projectApi = {
       headers: { "Content-Type": "application/json" },
     }),
 
-  getQuestions: (id) =>
-  api.get(`/projects/${id}/questions`),
-
+  getQuestions: (id) => api.get(`/projects/${id}/questions`),
 
   getFinalizedScope: (id, { signal } = {}) =>
     api.get(`/projects/${id}/finalized_scope`, { signal }),

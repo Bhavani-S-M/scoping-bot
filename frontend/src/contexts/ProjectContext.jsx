@@ -138,27 +138,40 @@ export const ProjectProvider = ({ children }) => {
     }
   };
 
-  const regenerateScope = async (id, draftScope = null) => {
+ // ==========================================================
+  // 🔁 Regenerate Scope (with user instructions)
+  // ==========================================================
+  const regenerateScope = async (projectId, draftScope, instructions = "") => {
     try {
-      let scopeToUse = draftScope;
-      try {
-        scopeToUse = await exportApi.exportToJson(id);
-      } catch (err) {
-        if (err?.response?.status === 400) {
-          scopeToUse = draftScope || {};
-        } else throw err;
+      if (!draftScope || Object.keys(draftScope).length === 0) {
+        throw new Error("Missing draft scope data for regeneration.");
       }
 
+      // 1️⃣ Call backend regeneration API
+      const payload = { draft: draftScope, instructions };
+      const res = await projectApi.regenerateScope(projectId, payload);
+      const regenScope = res.data || {};
+
+      console.log(`✅ Regenerated scope for project ${projectId}`);
+
+      // 2️⃣ Generate export previews (JSON / Excel / PDF)
       const [jsonPreview, excelPreview, pdfPreview] = await Promise.all([
-        exportApi.previewJson(id, scopeToUse),
-        exportApi.previewExcel(id, scopeToUse),
-        exportApi.previewPdf(id, scopeToUse),
+        exportApi.previewJson(projectId, regenScope),
+        exportApi.previewExcel(projectId, regenScope),
+        exportApi.previewPdf(projectId, regenScope),
       ]);
 
-      setLastPreviewScope(jsonPreview || null);
-      return jsonPreview;
+      // 3️⃣ Cache in context state
+      setLastPreviewScope(jsonPreview || regenScope);
+      setLastRedirectUrl(`/exports/${projectId}`);
+
+      return {
+        projectId,
+        scope: regenScope,
+        previews: { jsonPreview, excelPreview, pdfPreview },
+      };
     } catch (err) {
-      console.error(` Failed to regenerate scope for ${id}:`, err);
+      console.error(`❌ Failed to regenerate scope for ${projectId}:`, err);
       throw err;
     }
   };

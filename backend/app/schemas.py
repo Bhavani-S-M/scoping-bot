@@ -56,14 +56,12 @@ class CompanyBase(BaseModel):
 
 
 class CompanyCreate(CompanyBase):
-    """Used when creating a new company."""
     pass
 
 
 class CompanyRead(CompanyBase):
-    """Returned when reading company info."""
     id: uuid.UUID
-    owner_id: Optional[uuid.UUID] = None  # 👈 user who owns the company, None = global
+    owner_id: Optional[uuid.UUID] = None
 
     class Config:
         from_attributes = True
@@ -75,26 +73,25 @@ class RateCardBase(BaseModel):
 
 
 class RateCardCreate(RateCardBase):
-    """Used when adding a new rate card."""
     pass
 
 
 class RateCardUpdate(BaseModel):
-    """Used when updating existing rate cards."""
     monthly_rate: float
 
 
 class RateCardRead(RateCardBase):
-    """Returned when fetching rate cards."""
     id: uuid.UUID
     company_id: uuid.UUID
-    user_id: Optional[uuid.UUID] = None 
+    user_id: Optional[uuid.UUID] = None
 
     class Config:
         from_attributes = True
 
 
-# PROJECT FILE SCHEMAS
+# ==========================================================
+# 📁 PROJECT FILE SCHEMAS
+# ==========================================================
 class ProjectFile(BaseModel):
     id: uuid.UUID
     file_name: str
@@ -107,7 +104,9 @@ class ProjectFile(BaseModel):
         from_attributes = True
 
 
-# PROJECT SCHEMAS
+# ==========================================================
+# 📦 PROJECT SCHEMAS
+# ==========================================================
 class ProjectBase(BaseModel):
     name: Optional[str] = None
     domain: Optional[str] = None
@@ -119,7 +118,7 @@ class ProjectBase(BaseModel):
 
 
 class ProjectCreate(ProjectBase):
-    company_id: Optional[uuid.UUID] = None 
+    company_id: Optional[uuid.UUID] = None
 
 
 class Project(ProjectBase):
@@ -127,7 +126,7 @@ class Project(ProjectBase):
     files: List[ProjectFile] = []
     owner_id: Optional[uuid.UUID] = None
     company_id: Optional[uuid.UUID] = None
-    company: Optional[CompanyRead] = None 
+    company: Optional[CompanyRead] = None
     created_at: datetime
     updated_at: Optional[datetime]
     has_finalized_scope: bool = False
@@ -136,27 +135,33 @@ class Project(ProjectBase):
         from_attributes = True
 
 
-# SCOPE RESPONSE
+# ==========================================================
+# 📊 SCOPE & GENERATION SCHEMAS
+# ==========================================================
 class GeneratedScopeResponse(BaseModel):
     overview: Dict[str, Any] = {}
     activities: List[Dict[str, Any]] = []
     resourcing_plan: List[Dict[str, Any]] = []
     architecture_diagram: Optional[str] = None
+    _finalized: Optional[bool] = None   # ✅ Helpful flag after finalize or regen
 
 
-# GENERIC RESPONSES
 class MessageResponse(BaseModel):
     msg: str
     scope: Optional[Dict[str, Any]] = None
     file_url: Optional[str] = None
     has_finalized_scope: Optional[bool] = None
+    architecture_diagram: Optional[str] = None   # ✅ Optional for UI previews
 
 
-# REGENERATE SCOPE
 class RegenerateScopeRequest(BaseModel):
     draft: Dict[str, Any]
     instructions: str
-# QUESTION GENERATION SCHEMAS
+
+
+# ==========================================================
+# ❓ QUESTION GENERATION SCHEMAS
+# ==========================================================
 class QuestionItem(BaseModel):
     question: str
     user_understanding: Optional[str] = ""
