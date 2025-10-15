@@ -2,8 +2,7 @@ import { useParams, Link, useLocation } from "react-router-dom";
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useProjects } from "../contexts/ProjectContext";
 import { useExport } from "../contexts/ExportContext";
-
-
+import { usePrompts } from "../contexts/PromptsContext";
 import projectApi from "../api/projectApi";
 import exportApi, { safeFileName } from "../api/exportApi";
 import {
@@ -46,17 +45,15 @@ const formatCurrency = (v, currency = "USD") => {
   });
 };
 
-
 export default function Exports() {
   const { id } = useParams();
   const location = useLocation();
   const mode = new URLSearchParams(location.search).get("mode");
   const { finalizeScope, getFinalizedScope, regenerateScope } = useProjects();
+  const chatEndRef = useRef(null);
   const { previewPdf, getPdfBlob } = useExport();
   const [finalizing, setFinalizing] = useState(false);
-
   const incomingDraft = location.state?.draftScope || null;
-
   const [jsonText, setJsonText] = useState("");
   const [parseError, setParseError] = useState(null);
   const parsedDraft = useMemo(() => {
@@ -104,12 +101,16 @@ export default function Exports() {
   });
   const [regenPrompt, setRegenPrompt] = useState("");
   const [regenLoading, setRegenLoading] = useState(false);
+  const { prompts, loadPrompts, addPrompt, clearPrompts, setPrompts } = usePrompts();
   const textareaRef = useRef(null);
+  useEffect(() => {
+    if (chatEndRef.current && Array.isArray(prompts) && prompts.length > 0) {
+      chatEndRef.current.scrollIntoView({ behavior: "smooth", block: "end" });
+    }
+  }, [prompts]);
 
   const handleInputChange = (e) => {
     setRegenPrompt(e.target.value);
-
-    // Auto grow & shrink
     const el = textareaRef.current;
     if (el) {
       el.style.height = "auto"; 
@@ -138,30 +139,46 @@ export default function Exports() {
       setJsonText(JSON.stringify(newDraft, null, 2));
     }
   };
-
   const handleRegenerate = async () => {
     if (!parsedDraft || !regenPrompt.trim()) {
       toast.info("Please enter regeneration instructions first.");
       return;
     }
 
+    const userMsg = regenPrompt.trim();
+
+    // Add user message to chat history
+    await addPrompt(id, userMsg, "user");
+
+    // Reset input field + height
+    setRegenPrompt("");
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto";
+    }
+
     try {
       setRegenLoading(true);
       toast.info("Regenerating scope… this may take a few seconds");
 
-      const result = await regenerateScope(id, parsedDraft, regenPrompt);
+      const result = await regenerateScope(id, parsedDraft, userMsg);
 
       if (result?.scope) {
+        // Update JSON editor with regenerated scope
         setJsonText(JSON.stringify(result.scope, null, 2));
         setIsFinalized(false);
-        setRegenPrompt("");
-        toast.success("✅ Scope regenerated successfully!");
+        toast.success("Scope regenerated successfully!");
+
+        // Add assistant summary message to chat
+        const summary =
+          result.scope.overview?.["Project Summary"] ||
+          "Scope updated successfully with your latest instructions.";
+        await addPrompt(id, summary, "assistant");
       } else {
         toast.warn("No changes were made to the scope.");
       }
     } catch (err) {
       console.error("Regeneration failed:", err);
-      toast.error("Failed to regenerate scope");
+      toast.error("Failed to regenerate scope. Please try again.");
     } finally {
       setRegenLoading(false);
     }
@@ -255,7 +272,9 @@ export default function Exports() {
     };
   }, [id]);
 
-
+  useEffect(() => {
+    if (id) loadPrompts(id);
+  }, [id, loadPrompts]);
 
   //  Clear cached PDF & reset finalized state when JSON changes
   useEffect(() => {
@@ -273,16 +292,12 @@ export default function Exports() {
     skipResetRef.current = false;
   }, [jsonText]);
 
-
-
   // Keep finalized state stable and remove unnecessary reset logic
   const prevJsonRef = useRef("");
   useEffect(() => {
     // Simply track JSON changes; don't auto-reset isFinalized
     prevJsonRef.current = jsonText;
   }, [jsonText]);
-
-
 
   useEffect(() => {
     return () => {
@@ -407,8 +422,6 @@ export default function Exports() {
     refreshScope();
   }, [id, location.key]);
     
-  
-
   // ---------- Handle Finalize Scope ----------
   const handleFinalize = async () => {
     if (!parsedDraft) return;
@@ -427,8 +440,6 @@ export default function Exports() {
         skipResetRef.current = true; 
         setJsonText(JSON.stringify(finalizedData, null, 2));
       }
-
-
       setPreviewPdfUrl(null);
     } catch (err) {
       console.error("Finalize failed:", err);
@@ -570,13 +581,11 @@ export default function Exports() {
     );
   }
 
-
-
   return (
     <div className="space-y-6">
 
       <h1 className="text-2xl font-bold text-primary">
-        Export Project {project ? project.name : "…"}
+        {project ? project.name : "…"}
       </h1>
 
       {showSuccessBanner && (
@@ -585,39 +594,76 @@ export default function Exports() {
           <span>Scope finalized successfully! You can now download files.</span>
         </div>
       )}
-
-      <div className="flex flex-col gap-2 rounded-xl border px-4 py-2 bg-white dark:bg-gray-900 shadow-sm">
-        <textarea
-        ref={textareaRef}
-        value={regenPrompt}
-        onChange={handleInputChange}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            handleRegenerate();
-          }
+     <div className="flex flex-col gap-3 rounded-xl border px-4 py-3 bg-white dark:bg-gray-900 shadow-sm max-h-[300px] overflow-y-auto scroll-smooth">
+      {loading ? (
+        <p className="text-gray-400 text-sm italic">Loading chat history…</p>
+      ) : Array.isArray(prompts) && prompts.length === 0 ? (
+        <p className="text-gray-400 text-sm italic">No messages yet.</p>
+      ) : (
+        Array.isArray(prompts) && prompts.map((msg) => (
+          <div
+            key={msg.id}
+            className={`p-2 rounded-lg text-sm ${
+              msg.role === "user"
+                ? "bg-emerald-100 text-gray-800 self-end max-w-[80%]"
+                : "bg-gray-100 text-gray-700 self-start max-w-[80%]"
+            }`}
+          >
+            {msg.message}
+          </div>
+        ))
+      )}
+      <div ref={chatEndRef} />
+      <button
+        type="button"
+        onClick={async () => {
+          if (!window.confirm("Clear entire chat history?")) return;
+          await clearPrompts(id);
         }}
-        placeholder="Type your message here..."
-        rows={1}
-        className="w-full min-h-[1.25rem] bg-transparent border-none outline-none focus:ring-0 focus:outline-none text-sm text-gray-800 dark:text-gray-200 placeholder-gray-400 resize-none overflow-hidden leading-tight"
-      />
+        className="text-sm text-red-500 hover:underline mt-1 self-end"
+      >
+        Clear History
+      </button>
+    </div>
+
+
+
+      <div className="flex items-center gap-2 mt-2">
+        <textarea
+          ref={textareaRef}
+          value={regenPrompt}
+          onChange={handleInputChange}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              handleRegenerate();
+              requestAnimationFrame(() => {
+                setTimeout(() => {
+                  chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+                }, 120);
+              });
+            }
+          }}
+
+          placeholder="Type your message here…"
+          rows={1}
+          className="flex-1 bg-transparent border rounded-lg px-3 py-2 text-sm text-gray-800 dark:text-gray-200 placeholder-gray-400 resize-none"
+        />
 
         <button
           type="button"
           onClick={handleRegenerate}
           disabled={regenLoading || !parsedDraft}
-          className={`self-end p-2 rounded-full flex items-center justify-center transition ${
-            regenLoading
-              ? "bg-emerald-300 cursor-not-allowed"
-              : "bg-emerald-600 hover:bg-emerald-700"
-          }`}
+          className={`p-2 rounded-full ${
+            regenLoading ? "bg-emerald-300" : "bg-emerald-600 hover:bg-emerald-700"
+          } text-white`}
         >
           {regenLoading ? (
-            <Loader2 className="w-5 h-5 text-white animate-spin" />
+            <Loader2 className="w-5 h-5 animate-spin" />
           ) : (
             <svg
               xmlns="http://www.w3.org/2000/svg"
-              className="w-5 h-5 text-white"
+              className="w-5 h-5"
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -631,7 +677,9 @@ export default function Exports() {
             </svg>
           )}
         </button>
+
       </div>
+
 
       {/* Tabs */}
       <div className="flex gap-4 border-b border-gray-200 dark:border-gray-700">

@@ -148,6 +148,12 @@ class Project(Base):
         "ProjectFile", back_populates="project", cascade="all, delete-orphan"
     )
 
+    prompt_history: Mapped[list["ProjectPromptHistory"]] = relationship(
+        "ProjectPromptHistory",
+        back_populates="project",
+        cascade="all, delete-orphan"
+    )
+
     def __repr__(self):
         return f"<Project(id={str(self.id)[:8]}, name={self.name[:25] if self.name else None})>"
 
@@ -184,6 +190,43 @@ class ProjectFile(Base):
     def __repr__(self):
         return f"<ProjectFile(id={str(self.id)[:8]}, name={self.file_name})>"
 
+# PROJECT PROMPT HISTORY MODEL
+class ProjectPromptHistory(Base):
+    __tablename__ = "project_prompt_history"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True
+    )
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("projects.id", ondelete="CASCADE"),  
+        index=True,
+        nullable=False,
+    )
+
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),    
+        index=True,
+        nullable=True,
+    )
+
+    role: Mapped[str] = mapped_column(String(20), nullable=False)  
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    # Relationships
+    project: Mapped["Project"] = relationship("Project", back_populates="prompt_history")
+    user: Mapped["User"] = relationship("User")
+
+    def __repr__(self):
+        return f"<PromptHistory(role={self.role}, project={str(self.project_id)[:8]})>"
+
+
 @event.listens_for(Project, "after_delete")
 def delete_project_folder(mapper, connection, target):
     """Delete all blobs under the project's folder (safe + explicit)."""
@@ -191,7 +234,6 @@ def delete_project_folder(mapper, connection, target):
         from app.utils import azure_blob
         prefix = f"projects/{target.id}/"
 
-        # ✅ Explicitly call delete_folder instead of safe_delete_blob
         # This ensures folder deletion only when a project is truly deleted
         import asyncio
         try:
@@ -211,11 +253,11 @@ def delete_project_folder(mapper, connection, target):
 def delete_blob_after_file_delete(mapper, connection, target):
     """Delete single blob only if it’s not part of a project folder deletion."""
     try:
-        # ✅ Skip if the parent project was just deleted
+        # Skip if the parent project was just deleted
         if getattr(getattr(target, "project", None), "_blob_folder_deleted", False):
             return
 
-        # ✅ Delete only files with extension (not folders)
+        # Delete only files with extension (not folders)
         if target.file_path and "." in target.file_path:
             from app.utils import azure_blob
             azure_blob.safe_delete_blob(target.file_path)

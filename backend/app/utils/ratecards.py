@@ -102,7 +102,7 @@ async def delete_company(db: AsyncSession, company_id: uuid.UUID, user_id: uuid.
     return True
 
 
-# 💰 RATE CARD LOGIC
+#  RATE CARD LOGIC
 async def list_rate_cards_by_company(
     db: AsyncSession,
     company_id: uuid.UUID,

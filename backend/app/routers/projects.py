@@ -241,19 +241,19 @@ async def regenerate_scope_with_instructions(
     Regenerate a project's scope based on user-provided instructions.
     Overwrites finalized_scope.json in Azure Blob + updates DB metadata.
     """
-    # ✅ Step 1: Validate project
+    # Validate project
     db_project = await projects.get_project(db, project_id=project_id, owner_id=current_user.id)
     if not db_project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # ✅ Step 2: Extract data from request model
+    # Extract data from request model
     draft = request.draft
     instructions = request.instructions or ""
 
     if not draft:
         raise HTTPException(status_code=400, detail="Missing draft scope payload")
 
-    # ✅ Step 3: Regenerate
+    # Regenerate
     try:
         logger.info(f"Regenerating scope for project {project_id} with instructions: {instructions[:120]}...")
         regen_scope = await scope_engine.regenerate_from_instructions(
@@ -263,7 +263,7 @@ async def regenerate_scope_with_instructions(
             instructions=instructions,
         )
 
-        # ✅ Step 4: Return structured response
+        # Return structured response
         return schemas.GeneratedScopeResponse(
             overview=regen_scope.get("overview", {}),
             activities=regen_scope.get("activities", []),
@@ -304,9 +304,7 @@ async def generate_project_questions_route(
         raise HTTPException(status_code=500, detail="Question generation failed")
 
 
-# ==========================================================
-# 🧠 Update Project Questions with User Input
-# ==========================================================
+# Update Project Questions with User Input
 @router.post("/{project_id}/update_questions")
 async def update_project_questions_with_answers(
     project_id: uuid.UUID,
@@ -346,9 +344,7 @@ async def update_project_questions_with_answers(
         logger.error(f"Failed to update questions.json for project {project_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to update questions.json")
 
-# ==========================================================
-# 📂 Get Project Questions (from Blob)
-# ==========================================================
+# Get Project Questions (from Blob)
 @router.get("/{project_id}/questions")
 async def get_project_questions(
     project_id: uuid.UUID,

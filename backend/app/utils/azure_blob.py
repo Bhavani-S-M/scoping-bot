@@ -182,14 +182,14 @@ async def delete_blob_async(blob_path: str) -> bool:
     Never recursively delete a folder unless explicitly called by delete_folder().
     """
     try:
-        # 🛡️ Prevent accidental folder deletions
+        # Prevent accidental folder deletions
         if blob_path.endswith("/") or blob_path.count(".") == 0:
-            print(f"⚠️ Skipping recursive folder deletion for safety: {blob_path}")
+            print(f" Skipping recursive folder deletion for safety: {blob_path}")
             return False
 
         return await delete_blob(blob_path)
     except Exception as e:
-        print(f"❌ Failed async delete for {blob_path}: {e}")
+        print(f" Failed async delete for {blob_path}: {e}")
         return False
 
 
@@ -216,9 +216,9 @@ def safe_delete_blob(blob_path: str):
     Fire-and-forget blob delete — now protected against folder wipes.
     """
     try:
-        # 🛡️ Prevent unsafe deletions of project folders
+        # Prevent unsafe deletions of project folders
         if blob_path.endswith("/") or blob_path.count(".") == 0:
-            print(f"⚠️ Ignoring unsafe folder delete request: {blob_path}")
+            print(f" Ignoring unsafe folder delete request: {blob_path}")
             return
 
         loop = asyncio.get_running_loop()

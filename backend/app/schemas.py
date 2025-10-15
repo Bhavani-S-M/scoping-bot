@@ -1,14 +1,13 @@
 from __future__ import annotations
 import uuid
-from pydantic import BaseModel, EmailStr
-from typing import Optional, List, Dict, Any
 from datetime import datetime
+from enum import Enum
+from typing import Optional, List, Dict, Any
+from pydantic import BaseModel, EmailStr, Field
 from fastapi_users import schemas as fa_schemas
 
 
-# ==========================================================
-# 👤 USER SCHEMAS
-# ==========================================================
+# USER SCHEMAS
 class UserRead(fa_schemas.BaseUser[uuid.UUID]):
     username: str
     is_superuser: bool
@@ -34,9 +33,7 @@ class UserList(BaseModel):
         from_attributes = True
 
 
-# ==========================================================
-# 🔑 AUTHENTICATION
-# ==========================================================
+# AUTHENTICATION
 class Token(BaseModel):
     access_token: str
     refresh_token: Optional[str] = None
@@ -47,9 +44,7 @@ class TokenData(BaseModel):
     email: Optional[str] = None
 
 
-# ==========================================================
-# 💰 COMPANY + RATE CARD SCHEMAS
-# ==========================================================
+# COMPANY + RATE CARD SCHEMAS
 class CompanyBase(BaseModel):
     name: str
     currency: Optional[str] = "USD"
@@ -89,9 +84,7 @@ class RateCardRead(RateCardBase):
         from_attributes = True
 
 
-# ==========================================================
-# 📁 PROJECT FILE SCHEMAS
-# ==========================================================
+# PROJECT FILE SCHEMAS
 class ProjectFile(BaseModel):
     id: uuid.UUID
     file_name: str
@@ -104,9 +97,7 @@ class ProjectFile(BaseModel):
         from_attributes = True
 
 
-# ==========================================================
-# 📦 PROJECT SCHEMAS
-# ==========================================================
+#  PROJECT SCHEMAS
 class ProjectBase(BaseModel):
     name: Optional[str] = None
     domain: Optional[str] = None
@@ -135,15 +126,13 @@ class Project(ProjectBase):
         from_attributes = True
 
 
-# ==========================================================
-# 📊 SCOPE & GENERATION SCHEMAS
-# ==========================================================
+# SCOPE & GENERATION SCHEMAS
 class GeneratedScopeResponse(BaseModel):
     overview: Dict[str, Any] = {}
     activities: List[Dict[str, Any]] = []
     resourcing_plan: List[Dict[str, Any]] = []
     architecture_diagram: Optional[str] = None
-    _finalized: Optional[bool] = None   # ✅ Helpful flag after finalize or regen
+    _finalized: Optional[bool] = None
 
 
 class MessageResponse(BaseModel):
@@ -151,7 +140,7 @@ class MessageResponse(BaseModel):
     scope: Optional[Dict[str, Any]] = None
     file_url: Optional[str] = None
     has_finalized_scope: Optional[bool] = None
-    architecture_diagram: Optional[str] = None   # ✅ Optional for UI previews
+    architecture_diagram: Optional[str] = None
 
 
 class RegenerateScopeRequest(BaseModel):
@@ -159,9 +148,7 @@ class RegenerateScopeRequest(BaseModel):
     instructions: str
 
 
-# ==========================================================
-# ❓ QUESTION GENERATION SCHEMAS
-# ==========================================================
+#  QUESTION GENERATION SCHEMAS
 class QuestionItem(BaseModel):
     question: str
     user_understanding: Optional[str] = ""
@@ -176,3 +163,46 @@ class QuestionCategory(BaseModel):
 class GenerateQuestionsResponse(BaseModel):
     msg: str
     questions: List[QuestionCategory]
+
+
+#  PROMPT HISTORY SCHEMAS
+class RoleEnum(str, Enum):
+    user = "user"
+    assistant = "assistant"
+    system = "system"
+
+
+class PromptBase(BaseModel):
+    role: RoleEnum = Field(default=RoleEnum.user, description="Role of the speaker")
+    message: str = Field(..., min_length=1, description="Prompt text content")
+
+
+class PromptCreate(PromptBase):
+    pass
+
+
+class PromptUpdate(BaseModel):
+    message: str = Field(..., min_length=1)
+
+
+class PromptRead(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    user_id: Optional[uuid.UUID] = None
+    role: RoleEnum
+    message: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class PromptListResponse(BaseModel):
+    prompts: List[PromptRead]
+
+    class Config:
+        from_attributes = True
+
+
+class StatusResponse(BaseModel):
+    status: str

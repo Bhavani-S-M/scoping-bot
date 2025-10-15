@@ -370,7 +370,13 @@ def _build_scope_prompt(rfp_text: str, kb_chunks: List[str], project=None, model
         "}\n\n"
         f"-Rules:\n"
         f"- The first activity must always start today ({today_str}).\n"
-        "- **Allow maximum parallel execution**: activities with no dependency must overlap instead of running sequentially."
+        "### Scheduling Rules"
+        "- If two activities are **independent**, overlap their timelines by **60–70%** of their duration (not full overlap)."
+        "- If one activity **depends** on another, allow a small overlap of **1–3 days** near the end of the predecessor if feasible."
+        "- Avoid full serialization unless strictly required by dependency."
+        "- Avoid full parallelism where all tasks start together — stagger independent ones by **3–7 days**."
+        "- Ensure overall project duration stays **≤ 12 months**."
+        "- The first activity must always start today ({today_str})."
         "- Project duration must always be **under 12 months**.\n"
         "- Auto-calculate **End Date = Start Date + Effort Months**.\n"
         "- Auto-calculate **overview.Duration** as the total span in months from the earliest Start Date to the latest End Date.\n"
@@ -578,7 +584,7 @@ async def generate_project_questions(db: AsyncSession, project) -> dict:
                     {"role": "system", "content": "You are an expert business analyst."},
                     {"role": "user", "content": prompt},
                 ],
-                temperature=0.4,
+                temperature=0.8,
             )
         )
 
@@ -1344,12 +1350,12 @@ async def generate_project_scope(db: AsyncSession, project) -> dict:
                     q_lines.append(line)
 
             questions_context = "\n".join(q_lines)
-            logger.info(f"✅ Loaded {len(q_lines)} question lines for project {project.id}")
+            logger.info(f"Loaded {len(q_lines)} question lines for project {project.id}")
         else:
-            logger.info(f"ℹ️ No questions.json found for project {project.id}, skipping Q&A context.")
+            logger.info(f"No questions.json found for project {project.id}, skipping Q&A context.")
 
     except Exception as e:
-        logger.warning(f"⚠️ Could not include questions.json context: {e}")
+        logger.warning(f" Could not include questions.json context: {e}")
         questions_context = None
 
     
@@ -1364,7 +1370,7 @@ async def generate_project_scope(db: AsyncSession, project) -> dict:
             lambda: client.chat.completions.create(
                 model=deployment,
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
+                temperature=0.7,
             )
         )
         raw = _extract_json(resp.choices[0].message.content.strip())
@@ -1410,7 +1416,7 @@ async def generate_project_scope(db: AsyncSession, project) -> dict:
             )
             old_file = result.scalars().first()
             if old_file:
-                logger.info(f"♻️ Overwriting existing finalized_scope.json for project {project.id}")
+                logger.info(f"Overwriting existing finalized_scope.json for project {project.id}")
             else:
                 old_file = models.ProjectFile(
                     project_id=project.id,
@@ -1422,7 +1428,7 @@ async def generate_project_scope(db: AsyncSession, project) -> dict:
             await azure_blob.upload_bytes(
                 json.dumps(cleaned_scope, ensure_ascii=False, indent=2).encode("utf-8"),
                 blob_name,
-                overwrite=True,  # ✅ crucial: replace atomically in Blob Storage
+                overwrite=True, 
             )
 
             old_file.file_path = blob_name
@@ -1430,7 +1436,7 @@ async def generate_project_scope(db: AsyncSession, project) -> dict:
             await db.commit()
             await db.refresh(old_file)
 
-            logger.info(f"✅ finalized_scope.json overwritten for project {project.id}")
+            logger.info(f" finalized_scope.json overwritten for project {project.id}")
 
         except Exception as e:
             logger.warning(f" Failed to auto-save finalized_scope.json: {e}")
@@ -1451,7 +1457,7 @@ async def regenerate_from_instructions(
     Regenerate the project scope from user instructions using a creative AI-guided prompt.
     Enhances activity sequencing, roles, and effort estimates while preserving valid JSON structure.
     """
-    logger.info(f"🔁 Regenerating scope for project {project.id} with creative AI response...")
+    logger.info(f" Regenerating scope for project {project.id} with creative AI response...")
 
     if not instructions or not instructions.strip():
         cleaned = await clean_scope(db, draft, project=project)
@@ -1462,35 +1468,106 @@ async def regenerate_from_instructions(
         cleaned = await clean_scope(db, draft, project=project)
         return {**cleaned, "_finalized": True}
 
-    # ---- Build creative instruction-aware prompt ----
     prompt = f"""
-You are an **expert AI project planner and delivery architect**.
+You are an **expert AI project planner and delivery architect** responsible for maintaining a project scope in JSON format.
+
 You are given:
-1️⃣ The current draft project scope (in JSON).
-2️⃣ The user’s specific change instructions.
+1. The current draft project scope (JSON with keys: `overview`, `activities`, `resourcing_plan`).
+2. The user’s latest change instructions.
 
-You must:
-- Understand the intent behind the instructions (they may be natural language).
-- Modify the draft scope accordingly — you may add, remove, or reorder activities, adjust timelines,
-  change resources, or update descriptions to reflect the requested changes.
-- You can creatively infer missing dependencies or sequencing logic.
-- Preserve all schema keys exactly as before (overview, activities, resourcing_plan).
-- All dates must remain valid ISO `yyyy-mm-dd`.
-- Keep project duration under 12 months and maximize parallel execution.
-- Use realistic IT roles (Backend Developer, Data Engineer, QA Analyst, etc.).
-- Always return **only valid JSON**.
+Your task:
+- **Understand** the user’s intent (instructions may be in natural language).
+- **Regenerate** the scope accordingly:
+  - Apply all user instructions faithfully.
+  - Preserve structure and realism of the plan.
+  - Re-calculate activity dates, dependencies, and efforts using the rules below.
+  - Reflect improvements like “optimize”, “simplify”, “rebalance”, or “add QA phase”.
 
-If the user requests improvements (e.g., "optimize resourcing", "simplify timeline", "add data validation phase"),
-you must reflect those explicitly in the output.
+---
+
+### RULES OF MODIFICATION
+
+####  Schema
+- Preserve the same top-level keys: `overview`, `activities`, `resourcing_plan`.
+- Every activity must have: `id`, `name`, `effort_days`, `start_date`, `end_date`, and optional `depends_on`.
+- Use valid ISO dates (`yyyy-mm-dd`).
+- Keep total duration ≤ 12 months.
+
+####  Temporal Adjustment Rules
+Use these to keep the schedule consistent and continuous.
+
+**Add new activity (bottom)**  
+- Append at the end.  
+- Start date = 3 days *before* the current latest end_date.  
+- End date = start_date + duration derived from effort_days.  
+- Allow small overlap (1–3 days) with the last activity to maximize parallelism.
+
+**Add new activity (in middle)**  
+- Insert between the target activities without disturbing global schedule.  
+- Preceding activity’s end date remains fixed.  
+- Following activity’s start shifts minimally to maintain continuity.  
+- Only local dates adjust; efforts remain unchanged.
+
+**Delete activity**  
+- Remove it completely.  
+- Do not introduce gaps; subsequent activities retain start/end dates.
+
+**Split activity into two**  
+- Divide one activity into two consecutive ones.  
+- Combined effort_days = original.  
+- Combined duration = original.  
+- Other activities’ dates stay the same.
+
+**Merge two activities**  
+- Combine both into one.  
+- start_date = min(start of both)  
+- end_date = max(end of both)  
+- effort_days = sum(efforts of both)
+
+### Scheduling Rules
+- Activities should follow **semi-parallel execution** — overlap realistically but maintain logical order.
+- If two activities are **independent**, overlap their timelines by **30–50%** of their duration (not full overlap).
+- If one activity **depends** on another, allow a small overlap of **1–3 days** near the end of the predecessor if feasible.
+- Avoid full serialization unless strictly required by dependency.
+- Avoid full parallelism where all tasks start together — stagger independent ones by **3–7 days**.
+- Ensure overall project duration stays **≤ 12 months**.
+- The first activity must always start today.
+
+---
+
+### Effort-to-Duration Logic
+- Treat `effort_days` as actual working days per resource.
+- Duration (days) = effort_days (unless explicitly changed).
+
+---
+
+### Regeneration Logic
+- Clean and re-order activities logically.
+- Maintain coherent dependencies and sequential flow.
+- Adjust `overview.duration_months` automatically based on new total project span.
+- Keep resource roles realistic and consistent with activities (Backend Developer, Data Engineer, QA Analyst, etc.).
+- Reflect optimization or simplification requests (e.g., reduce redundant steps, consolidate phases).
+
+---
+
+###  Output Rules
+- Output **only valid JSON** — no markdown, no explanations.
+- Must include:
+  - `overview` → title, duration_months
+  - `activities` → updated list with all date/effort logic applied
+  - `resourcing_plan` → roles and counts consistent with changes
+
+---
 
 User Instructions:
 {instructions}
 
-Current Draft Scope (JSON):
+Current Draft Scope:
 {json.dumps(draft, indent=2, ensure_ascii=False)}
 
-Return ONLY valid JSON with updated overview, activities, and resourcing_plan.
+Return only the updated JSON.
 """
+
 
     # ---- Query Azure OpenAI creatively ----
     try:
@@ -1501,7 +1578,7 @@ Return ONLY valid JSON with updated overview, activities, and resourcing_plan.
                     {"role": "system", "content": "You are a creative yet precise project scoping expert."},
                     {"role": "user", "content": prompt},
                 ],
-                temperature=0.6,  # a bit higher for creative diversity
+                temperature=0.5,
             )
         )
 
@@ -1510,7 +1587,7 @@ Return ONLY valid JSON with updated overview, activities, and resourcing_plan.
         cleaned = await clean_scope(db, updated_scope, project=project)
 
     except Exception as e:
-        logger.error(f"⚠️ Creative regeneration failed: {e}")
+        logger.error(f" Creative regeneration failed: {e}")
         cleaned = await clean_scope(db, draft, project=project)
 
     # ---- Update project metadata from overview ----
@@ -1525,7 +1602,7 @@ Return ONLY valid JSON with updated overview, activities, and resourcing_plan.
         project.duration = str(overview.get("Duration") or project.duration)
         await db.commit()
         await db.refresh(project)
-        logger.info(f"✅ Project metadata synced for project {project.id}")
+        logger.info(f" Project metadata synced for project {project.id}")
 
     # ---- Overwrite finalized_scope.json in Blob ----
     result = await db.execute(
@@ -1549,10 +1626,8 @@ Return ONLY valid JSON with updated overview, activities, and resourcing_plan.
     await db.commit()
     await db.refresh(old_file)
 
-    logger.info(f"✅ Creative finalized_scope.json regenerated for project {project.id}")
+    logger.info(f" Creative finalized_scope.json regenerated for project {project.id}")
     return {**cleaned, "_finalized": True}
-
-
 
 
 async def finalize_scope(
@@ -1561,44 +1636,101 @@ async def finalize_scope(
     scope_data: dict
 ) -> tuple[models.ProjectFile, dict]:
     """
-    Clean and finalize scope JSON, update project metadata, and store finalized_scope.json in blob.
+    Finalize the project scope intelligently — clean, optimize sequencing, 
+    maximize parallelism, update metadata, and store finalized_scope.json.
     """
 
-    logger.info(f" Finalizing scope (engine) for project {project_id}...")
+    logger.info(f" Finalizing scope (LLM-optimized) for project {project_id}...")
 
-    # ---- Load project with company ----
+    # ---- Load project ----
     result = await db.execute(
         select(models.Project)
         .options(selectinload(models.Project.company))
         .filter(models.Project.id == project_id)
     )
     project = result.scalars().first()
+    if not project:
+        raise ValueError(f"Project {project_id} not found")
 
-    # ---- Clean the draft using project context ----
+    # ---- Step 1: Clean draft ----
     cleaned = await clean_scope(db, scope_data, project=project)
-    overview = cleaned.get("overview", {})
+
+    # ---- Step 2: Let LLM polish and optimize the scope (auto refinement) ----
+    optimized_scope = cleaned
+    if client and deployment:
+        try:
+            prompt = f"""
+You are an **expert AI delivery planner and PMO architect**.
+You are given a draft project scope in JSON format. 
+Your goal is to **refine and finalize** it — not redesign it.
+
+Tasks:
+- Clean and normalize the schedule for all activities.
+- Eliminate any idle gaps between activities.
+- Ensure activities start as early as possible while maintaining logical dependencies.
+- Maximize **semi-parallel execution** — allow small overlaps (1–3 days) for independent or handoff-related activities, 
+  but never start a dependent activity before its prerequisite ends.
+- Keep total project duration realistic and **under 12 months**.
+- Adjust Start/End Dates intelligently while keeping each activity's **Effort Months constant**.
+- Do **not** rename or delete existing activities unless the instructions specify it.
+- If an activity was **deleted** from the middle:
+  - Do not change earlier activities.
+  - Shift later activities left so there are **no time gaps**.
+  - Preserve their Effort Months exactly.
+- If a new activity was **added** in the middle:
+  - Insert it between its neighbors.
+  - Preceding activity’s End Date remains fixed.
+  - Following activity’s Start Date shifts minimally to make room.
+  - Keep total continuity and avoid any idle days.
+- If an activity’s dates or efforts were **edited**, update only local timing 
+  (neighboring activities adjust proportionally to preserve flow).
+- When two activities can run independently, overlap them slightly (2–4 days) to simulate parallel work.
+- Ensure Owner and Resources use valid IT roles (Backend Developer, Data Engineer, QA Analyst, etc.).
+- Maintain valid ISO date format (yyyy-mm-dd) and sequential IDs.
+- Preserve schema keys exactly: `overview`, `activities`, `resourcing_plan`.
+- Auto-update `overview.Duration` based on total span.
+- Return **only valid JSON**, no prose or markdown.
+
+Input JSON:
+{json.dumps(cleaned, indent=2, ensure_ascii=False)}
+"""
 
 
-    # ---- Update project metadata ----
-    result = await db.execute(
-        select(models.Project)
-        .options(selectinload(models.Project.files))
-        .filter(models.Project.id == project_id)
-    )
-    db_project = result.scalars().first()
+            resp = await anyio.to_thread.run_sync(
+                lambda: client.chat.completions.create(
+                    model=deployment,
+                    messages=[
+                        {"role": "system", "content": "You are a precise delivery planner optimizing timelines."},
+                        {"role": "user", "content": prompt},
+                    ],
+                    temperature=0.3,
+                )
+            )
 
-    if db_project and overview:
-        db_project.name = overview.get("Project Name") or db_project.name
-        db_project.domain = overview.get("Domain") or db_project.domain
-        db_project.complexity = overview.get("Complexity") or db_project.complexity
-        db_project.tech_stack = overview.get("Tech Stack") or db_project.tech_stack
-        db_project.use_cases = overview.get("Use Cases") or db_project.use_cases
-        db_project.compliance = overview.get("Compliance") or db_project.compliance
-        db_project.duration = str(overview.get("Duration") or db_project.duration)
+            raw_text = resp.choices[0].message.content.strip()
+            optimized_scope = _extract_json(raw_text)
+            logger.info(" LLM refined scope for finalization")
+
+        except Exception as e:
+            logger.warning(f" LLM optimization skipped due to error: {e}")
+
+    # ---- Step 3: Re-clean after LLM changes ----
+    finalized = await clean_scope(db, optimized_scope, project=project)
+    overview = finalized.get("overview", {})
+
+    # ---- Step 4: Update project metadata ----
+    if overview:
+        project.name = overview.get("Project Name") or project.name
+        project.domain = overview.get("Domain") or project.domain
+        project.complexity = overview.get("Complexity") or project.complexity
+        project.tech_stack = overview.get("Tech Stack") or project.tech_stack
+        project.use_cases = overview.get("Use Cases") or project.use_cases
+        project.compliance = overview.get("Compliance") or project.compliance
+        project.duration = str(overview.get("Duration") or project.duration)
         await db.commit()
-        await db.refresh(db_project)
+        await db.refresh(project)
 
-    # ---- Remove old finalized scope if exists ----
+    # ---- Step 5: Overwrite finalized_scope.json ----
     result = await db.execute(
         select(models.ProjectFile).filter(
             models.ProjectFile.project_id == project_id,
@@ -1607,7 +1739,7 @@ async def finalize_scope(
     )
     old_file = result.scalars().first()
     if old_file:
-        logger.info(f"♻️ Overwriting existing finalized_scope.json for project {project_id}")
+        logger.info(f" Overwriting existing finalized_scope.json for project {project_id}")
     else:
         old_file = models.ProjectFile(
             project_id=project_id,
@@ -1616,7 +1748,7 @@ async def finalize_scope(
 
     blob_name = f"{PROJECTS_BASE}/{project_id}/finalized_scope.json"
     await azure_blob.upload_bytes(
-        json.dumps(cleaned, ensure_ascii=False, indent=2).encode("utf-8"),
+        json.dumps(finalized, ensure_ascii=False, indent=2).encode("utf-8"),
         blob_name,
         overwrite=True,
     )
@@ -1626,5 +1758,5 @@ async def finalize_scope(
     await db.commit()
     await db.refresh(old_file)
 
-    logger.info(f"✅ Finalized scope overwritten for project {project_id}")
-    return old_file, {**cleaned, "_finalized": True}
+    logger.info(f" Finalized scope optimized and saved for project {project_id}")
+    return old_file, {**finalized, "_finalized": True}

@@ -120,7 +120,7 @@ async def create_project(
     # Attach files if provided
     if files:
         await add_project_files(db, db_project.id, files, owner_id)
-        logger.info(f"📎 Attached {len(files)} files to project {db_project.id}")
+        logger.info(f" Attached {len(files)} files to project {db_project.id}")
 
     # Refresh related data instead of extra SELECT
     await db.refresh(db_project, attribute_names=["company", "files"])
