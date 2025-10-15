@@ -71,6 +71,21 @@ def _extract_json(s: str) -> dict:
             except Exception:
                 return {}
         return {}
+    
+
+
+def _parse_date_safe(val: Any, fallback: datetime = None) -> datetime:
+    """Try to parse a date string; return fallback if invalid."""
+    if not val:
+        return fallback
+    try:
+        return datetime.strptime(str(val), "%Y-%m-%d")
+    except Exception:
+        return fallback
+
+def _safe_str(val: Any) -> str:
+    return str(val).strip() if val is not None else ""
+
 async def get_rate_map_for_project(db: AsyncSession, project) -> Dict[str, float]:
     """
     Fetch rate cards for the given project/company.
@@ -245,7 +260,6 @@ def _rag_retrieve(query: str, k: int = 3, expand_neighbors: bool = True) -> List
                         pass
             hits = expanded
 
-        # Group by parent_id
         grouped = {}
         for h in hits:
             grouped.setdefault(h["parent_id"], []).append(h)
@@ -283,7 +297,6 @@ def _rag_retrieve(query: str, k: int = 3, expand_neighbors: bool = True) -> List
         return []
 
 
-# ---------- Prompt ----------
 def _build_scope_prompt(rfp_text: str, kb_chunks: List[str], project=None, model_name: str = "gpt-4o", questions_context: str | None = None) -> str:
     import datetime, tiktoken
 
@@ -297,7 +310,7 @@ def _build_scope_prompt(rfp_text: str, kb_chunks: List[str], project=None, model
 
     # Trim RFP text
     rfp_tokens = tokenizer.encode(rfp_text or "")
-    if len(rfp_tokens) > 3000:   # still enforce cap on huge RFPs
+    if len(rfp_tokens) > 3000:
         rfp_tokens = rfp_tokens[:3000]
     rfp_text = tokenizer.decode(rfp_tokens)
     used_tokens += len(rfp_tokens)
@@ -313,7 +326,6 @@ def _build_scope_prompt(rfp_text: str, kb_chunks: List[str], project=None, model
 
     kb_context = "\n\n".join(safe_kb_chunks) if safe_kb_chunks else "(no KB context found)"
 
-    # ---------- Project user fields ----------
     name = (getattr(project, "name", "") or "").strip()
     domain = (getattr(project, "domain", "") or "").strip()
     complexity = (getattr(project, "complexity", "") or "").strip()
@@ -337,11 +349,11 @@ def _build_scope_prompt(rfp_text: str, kb_chunks: List[str], project=None, model
 
     today_str = datetime.date.today().isoformat()
 
-    # ---------- Final Prompt ----------
     return (
         "You are an expert AI project planner.\n"
-        "Use the RFP/project text as the **primary source**, but enrich missing fields "
-        "with the Knowledge Base context (if relevant).\n"
+        "Use the RFP/project text as the **primary source**"
+        "Use questions and answers to clarify ambiguities.\n"
+        "but enrich missing fields with the Knowledge Base context (if relevant).\n"
         "Return ONLY valid JSON (no prose, no markdown, no commentary).\n\n"
         "Output schema:\n"
         "{\n"
@@ -368,16 +380,13 @@ def _build_scope_prompt(rfp_text: str, kb_chunks: List[str], project=None, model
         "  ],\n"
         '  "resourcing_plan": []\n'
         "}\n\n"
-        f"-Rules:\n"
+        "Scheduling Rules"
         f"- The first activity must always start today ({today_str}).\n"
-        "### Scheduling Rules"
-        "- If two activities are **independent**, overlap their timelines by **60–70%** of their duration (not full overlap)."
-        "- If one activity **depends** on another, allow a small overlap of **1–3 days** near the end of the predecessor if feasible."
+        "- If two activities are **independent**, overlap their timelines by **70–80%** of their duration (not full overlap)."
+        "- If one activity **depends** on another, allow a small overlap of **10-15%** near the end of the predecessor if feasible."
         "- Avoid full serialization unless strictly required by dependency."
-        "- Avoid full parallelism where all tasks start together — stagger independent ones by **3–7 days**."
+        "- Avoid full parallelism where all tasks start together — stagger independent ones by **5-10%**."
         "- Ensure overall project duration stays **≤ 12 months**."
-        "- The first activity must always start today ({today_str})."
-        "- Project duration must always be **under 12 months**.\n"
         "- Auto-calculate **End Date = Start Date + Effort Months**.\n"
         "- Auto-calculate **overview.Duration** as the total span in months from the earliest Start Date to the latest End Date.\n"
         "- `Complexity` should be simple, medium, or large based on duration of project.\n"
@@ -393,7 +402,6 @@ def _build_scope_prompt(rfp_text: str, kb_chunks: List[str], project=None, model
         "- If the RFP or Knowledge Base text lacks detail, infer the missing pieces logically."
         "- Include all relevant roles and activities that ensure delivery of the project scope."
         "- Keep all field names exactly as in the schema.\n"
-
         f"{user_context}"
         f"RFP / Project Files Content:\n{rfp_text}\n\n"
         f"Knowledge Base Context (for enrichment only):\n{kb_context}\n"
@@ -402,10 +410,11 @@ def _build_scope_prompt(rfp_text: str, kb_chunks: List[str], project=None, model
         f"Do NOT hallucinate beyond these facts.\n\n"
         f"{questions_context}\n"
     )
+
+
 def _build_questionnaire_prompt(rfp_text: str, kb_chunks: List[str], project=None) -> str:
     """
-    Build a focused prompt to generate categorized questions
-    grouped under relevant topics (Architecture, Data, Security, etc.)
+    Build a prompt that forces the model to infer categories dynamically from RFP context.
     """
     name = getattr(project, "name", "Unnamed Project")
     domain = getattr(project, "domain", "General")
@@ -414,50 +423,65 @@ def _build_questionnaire_prompt(rfp_text: str, kb_chunks: List[str], project=Non
     duration = getattr(project, "duration", "TBD")
 
     return f"""
-You are an expert business analyst who reviews RFPs and creates structured questionnaires
-to clarify requirements before project scoping.
+You are a **senior business analyst** preparing a requirement-clarification questionnaire
+based on an RFP document.
 
-Based on the following information, generate **categorized questions** grouped logically.
+Your goal: identify the main THEMES and subareas discussed in the RFP or Knowledge Base,
+and then create **categories of questions** that align with those themes.
+Do NOT reuse example categories blindly — derive them from the content itself.
 
-Project Context:
+---
+
+### Project Context
 - Project Name: {name}
 - Domain: {domain}
 - Tech Stack: {tech}
 - Compliance: {compliance}
 - Duration: {duration}
 
-RFP Content:
+### RFP Content
 {rfp_text}
 
-Knowledge Base Context:
+### Knowledge Base Context
 {kb_chunks}
 
 ---
 
-Return ONLY valid JSON in the following format:
+### TASK
+1. First, analyze the RFP text to identify **key themes or topics** (e.g., Data Governance, SOX Controls,
+   Cloud Migration, AI Enablement, Supply Chain Optimization, etc.).
+2. For each theme, create a **category** with 5-6 specific questions.
+3. Questions should clarify requirements, assumptions, or current-state processes.
+4. Avoid repeating generic categories like "Architecture" or "Data & Security"
+   unless they are explicitly discussed in the RFP.
+
+---
+
+### OUTPUT FORMAT
+Return ONLY valid JSON in this structure:
 
 {{
   "questions": [
     {{
-      "category": "Architecture",
+      "category": "Data Governance & Ownership",
       "items": [
         {{
-          "question": "What is the preferred deployment model?",
+          "question": "Is there a defined data ownership model for finance data?",
           "user_understanding": "",
           "comment": ""
         }},
         {{
-          "question": "Do you need auto-scaling or load balancing?",
+          "question": "Do you maintain audit logs for data corrections?",
           "user_understanding": "",
           "comment": ""
         }}
       ]
     }},
     {{
-      "category": "Data & Security",
+      "category": "Regulatory Readiness and SOX Scope",
       "items": [
         {{
-          "question": "Will sensitive data be stored or processed?",
+          "question": "What parts of the organization are in SOX scope?",
           "user_understanding": "",
           "comment": ""
         }}
@@ -466,26 +490,15 @@ Return ONLY valid JSON in the following format:
   ]
 }}
 
-Rules:
-- Group questions by meaningful categories (Architecture, Data, Integration, Compliance, Delivery, etc.)
-- Each category must have at least 2 questions.
-- Every question must be clear, specific, and require a short textual answer.
+### RULES
+- Categories must emerge logically from the RFP and KB text.
+- Each category must contain at least 2 context-relevant questions.
+- Each question must be concise, unambiguous, and require a short descriptive answer.
 - Always include empty strings for 'user_understanding' and 'comment'.
-- Return ONLY valid JSON (no markdown, no explanations).
+- Output ONLY valid JSON (no explanations or markdown).
 """
+
 def _extract_questions_from_text(raw_text: str) -> list[dict]:
-    """
-    Extract categorized questions from JSON or text.
-    Output format:
-    [
-      {
-        "category": "Architecture",
-        "items": [
-          {"question": "...", "user_understanding": "", "comment": ""}
-        ]
-      }
-    ]
-    """
     try:
         parsed = _extract_json(raw_text)
 
@@ -625,19 +638,6 @@ async def generate_project_questions(db: AsyncSession, project) -> dict:
 async def update_questions_with_user_input(
     db: AsyncSession, project, user_answers: dict
 ) -> dict:
-    """
-    Merge user answers into the existing questions.json for the given project.
-    Example user_answers structure:
-    {
-      "Architecture": {
-         "What is the preferred deployment model?": "Cloud-based",
-         "Do you need auto-scaling or load balancing?": "Yes, via AKS"
-      },
-      "Data & Security": {
-         "Will sensitive data be stored or processed?": "Yes, PII data"
-      }
-    }
-    """
     from app.utils import azure_blob
 
     blob_name = f"{PROJECTS_BASE}/{project.id}/questions.json"
@@ -680,21 +680,6 @@ async def update_questions_with_user_input(
     except Exception as e:
         logger.error(f"Failed to update questions.json with user input: {e}")
         return {}
-
-
-
-
-def _parse_date_safe(val: Any, fallback: datetime = None) -> datetime:
-    """Try to parse a date string; return fallback if invalid."""
-    if not val:
-        return fallback
-    try:
-        return datetime.strptime(str(val), "%Y-%m-%d")
-    except Exception:
-        return fallback
-
-def _safe_str(val: Any) -> str:
-    return str(val).strip() if val is not None else ""
 
     
 def _build_architecture_prompt(rfp_text: str, kb_chunks: List[str], project=None) -> str:
@@ -1498,15 +1483,15 @@ Use these to keep the schedule consistent and continuous.
 
 **Add new activity (bottom)**  
 - Append at the end.  
-- Start date = 3 days *before* the current latest end_date.  
+- Start date = 10 days *before* the current latest end_date.  
 - End date = start_date + duration derived from effort_days.  
-- Allow small overlap (1–3 days) with the last activity to maximize parallelism.
+- Allow small overlap (10-15 %) with the last activity to maximize parallelism.
 
 **Add new activity (in middle)**  
 - Insert between the target activities without disturbing global schedule.  
 - Preceding activity’s end date remains fixed.  
 - Following activity’s start shifts minimally to maintain continuity.  
-- Only local dates adjust; efforts remain unchanged.
+- Only local dates adjust; efforts remain unchanged for following activities.
 
 **Delete activity**  
 - Remove it completely.  
@@ -1526,19 +1511,12 @@ Use these to keep the schedule consistent and continuous.
 
 ### Scheduling Rules
 - Activities should follow **semi-parallel execution** — overlap realistically but maintain logical order.
-- If two activities are **independent**, overlap their timelines by **30–50%** of their duration (not full overlap).
-- If one activity **depends** on another, allow a small overlap of **1–3 days** near the end of the predecessor if feasible.
+- If two activities are **independent**, overlap their timelines by **70–80%** of their duration (not full overlap).
+- If one activity **depends** on another, allow a small overlap of **10-15%** near the end of the predecessor if feasible.
 - Avoid full serialization unless strictly required by dependency.
-- Avoid full parallelism where all tasks start together — stagger independent ones by **3–7 days**.
+- Avoid full parallelism where all tasks start together — stagger independent ones by **10-15%**.
 - Ensure overall project duration stays **≤ 12 months**.
 - The first activity must always start today.
-
----
-
-### Effort-to-Duration Logic
-- Treat `effort_days` as actual working days per resource.
-- Duration (days) = effort_days (unless explicitly changed).
-
 ---
 
 ### Regeneration Logic
@@ -1556,6 +1534,7 @@ Use these to keep the schedule consistent and continuous.
   - `overview` → title, duration_months
   - `activities` → updated list with all date/effort logic applied
   - `resourcing_plan` → roles and counts consistent with changes
+  - **Dont change schema or field names.**
 
 ---
 
@@ -1636,11 +1615,11 @@ async def finalize_scope(
     scope_data: dict
 ) -> tuple[models.ProjectFile, dict]:
     """
-    Finalize the project scope intelligently — clean, optimize sequencing, 
-    maximize parallelism, update metadata, and store finalized_scope.json.
+    Finalize the project scope without LLM — just clean, validate sequencing,
+    update metadata, and save finalized_scope.json.
     """
 
-    logger.info(f" Finalizing scope (LLM-optimized) for project {project_id}...")
+    logger.info(f"Finalizing scope (no LLM) for project {project_id}...")
 
     # ---- Load project ----
     result = await db.execute(
@@ -1653,72 +1632,10 @@ async def finalize_scope(
         raise ValueError(f"Project {project_id} not found")
 
     # ---- Step 1: Clean draft ----
-    cleaned = await clean_scope(db, scope_data, project=project)
-
-    # ---- Step 2: Let LLM polish and optimize the scope (auto refinement) ----
-    optimized_scope = cleaned
-    if client and deployment:
-        try:
-            prompt = f"""
-You are an **expert AI delivery planner and PMO architect**.
-You are given a draft project scope in JSON format. 
-Your goal is to **refine and finalize** it — not redesign it.
-
-Tasks:
-- Clean and normalize the schedule for all activities.
-- Eliminate any idle gaps between activities.
-- Ensure activities start as early as possible while maintaining logical dependencies.
-- Maximize **semi-parallel execution** — allow small overlaps (1–3 days) for independent or handoff-related activities, 
-  but never start a dependent activity before its prerequisite ends.
-- Keep total project duration realistic and **under 12 months**.
-- Adjust Start/End Dates intelligently while keeping each activity's **Effort Months constant**.
-- Do **not** rename or delete existing activities unless the instructions specify it.
-- If an activity was **deleted** from the middle:
-  - Do not change earlier activities.
-  - Shift later activities left so there are **no time gaps**.
-  - Preserve their Effort Months exactly.
-- If a new activity was **added** in the middle:
-  - Insert it between its neighbors.
-  - Preceding activity’s End Date remains fixed.
-  - Following activity’s Start Date shifts minimally to make room.
-  - Keep total continuity and avoid any idle days.
-- If an activity’s dates or efforts were **edited**, update only local timing 
-  (neighboring activities adjust proportionally to preserve flow).
-- When two activities can run independently, overlap them slightly (2–4 days) to simulate parallel work.
-- Ensure Owner and Resources use valid IT roles (Backend Developer, Data Engineer, QA Analyst, etc.).
-- Maintain valid ISO date format (yyyy-mm-dd) and sequential IDs.
-- Preserve schema keys exactly: `overview`, `activities`, `resourcing_plan`.
-- Auto-update `overview.Duration` based on total span.
-- Return **only valid JSON**, no prose or markdown.
-
-Input JSON:
-{json.dumps(cleaned, indent=2, ensure_ascii=False)}
-"""
-
-
-            resp = await anyio.to_thread.run_sync(
-                lambda: client.chat.completions.create(
-                    model=deployment,
-                    messages=[
-                        {"role": "system", "content": "You are a precise delivery planner optimizing timelines."},
-                        {"role": "user", "content": prompt},
-                    ],
-                    temperature=0.3,
-                )
-            )
-
-            raw_text = resp.choices[0].message.content.strip()
-            optimized_scope = _extract_json(raw_text)
-            logger.info(" LLM refined scope for finalization")
-
-        except Exception as e:
-            logger.warning(f" LLM optimization skipped due to error: {e}")
-
-    # ---- Step 3: Re-clean after LLM changes ----
-    finalized = await clean_scope(db, optimized_scope, project=project)
+    finalized = await clean_scope(db, scope_data, project=project)
     overview = finalized.get("overview", {})
 
-    # ---- Step 4: Update project metadata ----
+    # ---- Step 2: Update project metadata ----
     if overview:
         project.name = overview.get("Project Name") or project.name
         project.domain = overview.get("Domain") or project.domain
@@ -1730,7 +1647,7 @@ Input JSON:
         await db.commit()
         await db.refresh(project)
 
-    # ---- Step 5: Overwrite finalized_scope.json ----
+    # ---- Step 3: Save finalized_scope.json ----
     result = await db.execute(
         select(models.ProjectFile).filter(
             models.ProjectFile.project_id == project_id,
@@ -1758,5 +1675,5 @@ Input JSON:
     await db.commit()
     await db.refresh(old_file)
 
-    logger.info(f" Finalized scope optimized and saved for project {project_id}")
+    logger.info(f" Finalized scope saved (no LLM) for project {project_id}")
     return old_file, {**finalized, "_finalized": True}

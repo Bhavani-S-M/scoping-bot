@@ -594,91 +594,106 @@ export default function Exports() {
           <span>Scope finalized successfully! You can now download files.</span>
         </div>
       )}
-     <div className="flex flex-col gap-3 rounded-xl border px-4 py-3 bg-white dark:bg-gray-900 shadow-sm max-h-[300px] overflow-y-auto scroll-smooth">
-      {loading ? (
-        <p className="text-gray-400 text-sm italic">Loading chat history…</p>
-      ) : Array.isArray(prompts) && prompts.length === 0 ? (
-        <p className="text-gray-400 text-sm italic">No messages yet.</p>
-      ) : (
-        Array.isArray(prompts) && prompts.map((msg) => (
-          <div
-            key={msg.id}
-            className={`p-2 rounded-lg text-sm ${
-              msg.role === "user"
-                ? "bg-emerald-100 text-gray-800 self-end max-w-[80%]"
-                : "bg-gray-100 text-gray-700 self-start max-w-[80%]"
-            }`}
-          >
-            {msg.message}
-          </div>
-        ))
-      )}
-      <div ref={chatEndRef} />
-      <button
-        type="button"
-        onClick={async () => {
-          if (!window.confirm("Clear entire chat history?")) return;
-          await clearPrompts(id);
-        }}
-        className="text-sm text-red-500 hover:underline mt-1 self-end"
-      >
-        Clear History
-      </button>
-    </div>
-
-
-
-      <div className="flex items-center gap-2 mt-2">
-        <textarea
-          ref={textareaRef}
-          value={regenPrompt}
-          onChange={handleInputChange}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              handleRegenerate();
-              requestAnimationFrame(() => {
-                setTimeout(() => {
-                  chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-                }, 120);
-              });
-            }
-          }}
-
-          placeholder="Type your message here…"
-          rows={1}
-          className="flex-1 bg-transparent border rounded-lg px-3 py-2 text-sm text-gray-800 dark:text-gray-200 placeholder-gray-400 resize-none"
-        />
-
-        <button
-          type="button"
-          onClick={handleRegenerate}
-          disabled={regenLoading || !parsedDraft}
-          className={`p-2 rounded-full ${
-            regenLoading ? "bg-emerald-300" : "bg-emerald-600 hover:bg-emerald-700"
-          } text-white`}
-        >
-          {regenLoading ? (
-            <Loader2 className="w-5 h-5 animate-spin" />
+      <div className="relative rounded-xl border bg-white dark:bg-gray-900 shadow-inner h-[400px] flex flex-col">
+        <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3 scrollbar-thin scrollbar-thumb-emerald-400 scrollbar-track-gray-100">
+          {loading ? (
+            <p className="text-gray-400 text-sm italic">Loading chat history…</p>
+          ) : Array.isArray(prompts) && prompts.length === 0 ? (
+            <p className="text-gray-400 text-sm italic">No messages yet.</p>
           ) : (
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              className="w-5 h-5"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={2}
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M4 4l16 8-16 8 4-8-4-8z"
-              />
-            </svg>
+            prompts.map((msg) => (
+              <div
+                key={msg.id}
+                className={`flex ${
+                  msg.role === "user" ? "justify-end" : "justify-start"
+                }`}
+              >
+                <div
+                  className={`rounded-2xl px-4 py-2 text-sm max-w-[75%] leading-relaxed shadow-sm ${
+                    msg.role === "user"
+                      ? "bg-emerald-600 text-white rounded-br-none"
+                      : "bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200 rounded-bl-none"
+                  }`}
+                >
+                  {msg.message}
+                  <div className="text-[10px] text-gray-400 mt-1 text-right">
+                    {new Date(msg.created_at || Date.now()).toLocaleTimeString([], {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                  </div>
+                </div>
+              </div>
+            ))
           )}
-        </button>
+          <div ref={chatEndRef} />
+        </div>
+        {/* Chat input bar (padded inner container) */}
+        <div className="px-3 pb-3 pt-2">
+          <div className="px-3 py-1.5 bg-gray-90 dark:bg-gray-800 rounded-full flex items-center gap-2 border border-gray-300 dark:border-gray-700 shadow-sm transition-all focus-within:ring-2 focus-within:ring-emerald-400">
+            <textarea
+              ref={textareaRef}
+              value={regenPrompt}
+              onChange={handleInputChange}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  handleRegenerate();
+                  requestAnimationFrame(() => {
+                    setTimeout(() => {
+                      chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+                    }, 120);
+                  });
+                }
+              }}
+              placeholder="Send an instruction to regenerate scope…"
+              rows={1}
+              className="flex-1 resize-none bg-transparent text-sm text-gray-800 dark:text-gray-200 placeholder-gray-400 border-none focus:ring-0 outline-none px-2 py-1 rounded-full leading-relaxed max-h-24"
+            />
+
+            <button
+              type="button"
+              onClick={handleRegenerate}
+              disabled={regenLoading || !parsedDraft}
+              className={`p-3.5 rounded-full transition-all ${
+                regenLoading
+                  ? "bg-emerald-300 cursor-not-allowed"
+                  : "bg-emerald-600 hover:bg-emerald-700 active:scale-95"
+              } text-white shadow-md`}
+            >
+              {regenLoading ? (
+                <Loader2 className="w-5 h-5 animate-spin" />
+              ) : (
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="w-4 h-4"
+                  fill="none"
+                  viewBox="1 1 24 24"
+                  stroke="currentColor"
+                  strokeWidth={3}
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 4l16 8-16 8 4-8-4-8z" />
+                </svg>
+              )}
+            </button>
+          </div>
+        </div>
+
+
 
       </div>
+      <div className="flex justify-end border-t border-gray-200 px-3 py-0.5">
+          <button
+            type="button"
+            onClick={async () => {
+              if (!window.confirm("Clear entire chat history?")) return;
+              await clearPrompts(id);
+            }}
+            className="text-xs text-red-500 hover:text-red-700"
+          >
+            Clear Chat
+          </button>
+        </div>
 
 
       {/* Tabs */}
