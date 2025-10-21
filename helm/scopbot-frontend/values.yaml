@@ -26,7 +26,7 @@ namespace: scopbot
 ingress:
   enabled: true
   className: nginx
-  host: scopingbot.eastus.cloudapp.azure.com
+  host: scopebot.duckdns.org
   tlsEnabled: true
   tlsSecretName: scopbot-tls
   annotations:
