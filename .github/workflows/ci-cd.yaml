@@ -86,6 +86,16 @@ jobs:
           else
             echo "No secrets.yaml found — skipping"
           fi
+      # Apply ClusterIssuer (Let’s Encrypt TLS)
+      - name: Apply ClusterIssuer for cert-manager
+        run: |
+          if [ -f "$HELM_DIR/cluster-issuer.yaml" ]; then
+            echo "Applying ClusterIssuer configuration..."
+            kubectl apply -f $HELM_DIR/cluster-issuer.yaml
+          else
+            echo " cluster-issuer.yaml not found — skipping"
+          fi
+
 
       # Deploy Backend via Helm
       - name: Deploy backend via Helm

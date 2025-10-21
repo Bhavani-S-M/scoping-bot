@@ -26,9 +26,13 @@ namespace: scopbot
 ingress:
   enabled: true
   className: nginx
-  host: ""            
-  tlsEnabled: false   
+  host: scopbot.cloudapp.azure.com      # 👈 Your real domain (resolves to ingress IP)
+  tlsEnabled: true                      # 👈 Enable TLS
+  tlsSecretName: scopbot-tls            # 👈 Secret where cert-manager stores your cert
   annotations:
+    kubernetes.io/ingress.class: nginx
+    cert-manager.io/cluster-issuer: letsencrypt-prod   # 👈 Use your existing issuer
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"  # 👈 Redirect HTTP→HTTPS
     nginx.ingress.kubernetes.io/proxy-body-size: "500m"
     nginx.ingress.kubernetes.io/proxy-buffering: "off"
     nginx.ingress.kubernetes.io/proxy-request-buffering: "off"

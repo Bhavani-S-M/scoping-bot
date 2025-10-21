@@ -19,8 +19,16 @@ metadata:
 spec:
   ingressClassName: {{ .Values.ingress.className }}
 
+  {{- if .Values.ingress.tlsEnabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host }}
+      secretName: {{ .Values.ingress.tlsSecretName }}
+  {{- end }}
+
   rules:
-    - http:
+    - host: {{ .Values.ingress.host }}
+      http:
         paths:
           # Frontend (React)
           - path: /
