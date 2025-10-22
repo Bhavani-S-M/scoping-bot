@@ -26,8 +26,8 @@ namespace: scopbot
 ingress:
   enabled: true
   className: nginx
-  host: scopingbot.duckdns.org
-  tlsEnabled: true
+  host: ""
+  tlsEnabled: false
   tlsSecretName: scopbot-tls
   annotations:
     kubernetes.io/ingress.class: nginx
