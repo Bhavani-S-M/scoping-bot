@@ -1,6 +1,5 @@
 # app/utils/scope_engine.py
 from __future__ import annotations
-import asyncio
 import json, re, logging, math, os, tempfile,anyio,pytesseract, openpyxl,tiktoken, pytz, graphviz
 from app import models
 from calendar import monthrange
@@ -814,11 +813,14 @@ digraph Architecture {
         dashboard[label="BI Dashboard", shape=ellipse, fillcolor="#E1BEE7"];
     }
 
-    # Data flow
-    web -> api -> db;
-    mobile -> api;
-    db -> ai -> dashboard;
-    api -> auth;
+    # Data flow (using xlabels to avoid orthogonal label warnings)
+    web -> api [xlabel="HTTP Request"];
+    mobile -> api [xlabel="Mobile API Call"];
+    api -> db [xlabel="DB Query"];
+    db -> ai [xlabel="ETL/Inference"];
+    ai -> dashboard [xlabel="Visualization"];
+    api -> auth [xlabel="Auth Validation"];
+
 }
 """
 
@@ -1226,7 +1228,7 @@ async def generate_project_scope(db: AsyncSession, project) -> dict:
     Generate project scope + architecture diagram + store architecture in DB + return combined JSON.
     """
 
-    # ✅ Ensure the project has a valid company reference (fallback to Sigmoid)
+    #  Ensure the project has a valid company reference (fallback to Sigmoid)
     if not getattr(project, "company_id", None):
         from app.utils import ratecards
         sigmoid = await ratecards.get_or_create_sigmoid_company(db)

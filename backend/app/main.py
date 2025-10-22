@@ -2,10 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import os
-
-from app.config import config
 from app.config.database import async_engine, Base 
-from app import models
 from app.auth import router as auth_router
 from app.routers import projects, exports, blob, ratecards, project_prompts
 from app.utils import azure_blob

@@ -1,0 +1,46 @@
+# --- Core Framework ---
+fastapi==0.116.1
+uvicorn[standard]==0.35.0
+python-dotenv==1.1.1
+anyio==4.10.0
+
+# --- Auth & Users ---
+fastapi-users==14.0.1
+fastapi-users-db-sqlalchemy==7.0.0
+passlib==1.7.4
+python-jose==3.5.0
+email-validator==2.2.0
+python-multipart==0.0.20
+
+# --- Database & ORM ---
+sqlalchemy==2.0.43
+asyncpg==0.30.0
+alembic==1.16.5
+
+# --- Azure SDKs ---
+azure-core==1.35.0
+azure-common==1.1.28
+azure-storage-blob==12.26.0
+azure-search-documents==11.5.3
+
+# --- AI & LLM ---
+openai==1.105.0
+tiktoken==0.11.0
+
+# --- File & Document Processing ---
+python-docx==1.1.2
+python-pptx==0.6.23
+openpyxl==3.1.5
+xlsxwriter==3.2.5
+pdfminer.six==20231228
+reportlab==4.4.3
+pillow==11.3.0
+pytesseract==0.3.13
+graphviz==0.21
+pytz==2025.2
+
+# --- Utilities ---
+requests==2.32.5
+regex==2025.9.18
+python-dateutil==2.9.0.post0
+PyYAML==6.0.2

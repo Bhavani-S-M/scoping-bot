@@ -1,9 +1,9 @@
 # app/utils/azure_blob.py
 from typing import List, Dict, Union
-import anyio
+import anyio, asyncio
 from azure.storage.blob.aio import BlobServiceClient, ContainerClient
 from azure.storage.blob import generate_container_sas, ContainerSasPermissions
-from azure.core.exceptions import ResourceExistsError
+from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
 from app.config import config
 from datetime import datetime, timedelta
 
@@ -128,8 +128,6 @@ async def explorer(base: str) -> Dict:
 
 
 # DELETE
-import asyncio
-from azure.core.exceptions import ResourceNotFoundError
 
 async def delete_blob(blob_name: str, base: str = "") -> bool:
     """Delete a single blob safely."""

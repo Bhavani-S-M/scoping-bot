@@ -1,8 +1,7 @@
 # Email utilities: send OTPs, password reset links, and verification links.
-import smtplib
+import os, smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-import os
 from fastapi import BackgroundTasks
 from app.config import config
 
