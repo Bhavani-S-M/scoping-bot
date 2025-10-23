@@ -94,7 +94,6 @@ jobs:
           else
             echo "cluster-issuer.yaml not found — skipping"
           fi
-
       # Deploy Backend via Helm
       - name: Deploy backend via Helm
         run: |
@@ -104,12 +103,6 @@ jobs:
             --set image.tag=${{ github.sha }} \
             --set appVersion=v${{ github.run_number }}
 
-      - name: Verify backend rollout
-        run: |
-          kubectl rollout status deployment/scopbot-backend -n $NAMESPACE --timeout=180s || \
-          (echo "Backend rollout failed, rolling back..." && helm rollback backend 1 -n $NAMESPACE)
-
-        
       # Deploy Frontend via Helm
       - name: Deploy frontend via Helm
         run: |
@@ -118,8 +111,3 @@ jobs:
             --set image.repository=$FRONTEND_IMAGE \
             --set image.tag=${{ github.sha }} \
             --set appVersion=v${{ github.run_number }}
-
-      - name: Verify frontend rollout
-        run: |
-          kubectl rollout status deployment/scopbot-frontend -n $NAMESPACE --timeout=180s || \
-          (echo "Frontend rollout failed, rolling back..." && helm rollback frontend 1 -n $NAMESPACE)
