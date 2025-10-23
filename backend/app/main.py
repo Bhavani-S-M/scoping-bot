@@ -48,3 +48,12 @@ app.include_router(exports.router)
 app.include_router(blob.router)
 app.include_router(ratecards.router)
 app.include_router(project_prompts.router)
+
+# ---------- Health Check ----------
+@app.get("/health")
+async def health_check():
+    """
+    Health check endpoint for Kubernetes probes.
+    """
+    return {"status": "ok"}
+
