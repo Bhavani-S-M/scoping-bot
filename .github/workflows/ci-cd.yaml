@@ -73,19 +73,18 @@ jobs:
       - name: Install Helm
         uses: azure/setup-helm@v4
 
+      # Wait for CSI driver readiness
+      - name: Wait for CSI driver readiness
+        run: |
+          kubectl wait --for=condition=Ready pod \
+            -l "app in (secrets-store-csi-driver,secrets-store-provider-azure)" \
+            -n kube-system --timeout=180s || true
+
       # Create Namespace (if not exists)
       - name: Apply namespace
         run: |
           kubectl apply -f $HELM_DIR/namespace.yaml || true
 
-      # Apply Secrets (optional)
-      - name: Apply secrets
-        run: |
-          if [ -f "$HELM_DIR/secrets.yaml" ]; then
-            kubectl apply -f $HELM_DIR/secrets.yaml -n $NAMESPACE
-          else
-            echo "No secrets.yaml found — skipping"
-          fi
       # Apply ClusterIssuer (Let’s Encrypt TLS)
       - name: Apply ClusterIssuer for cert-manager
         run: |
@@ -93,9 +92,8 @@ jobs:
             echo "Applying ClusterIssuer configuration..."
             kubectl apply -f $HELM_DIR/cluster-issuer.yaml
           else
-            echo " cluster-issuer.yaml not found — skipping"
+            echo "cluster-issuer.yaml not found — skipping"
           fi
-
 
       # Deploy Backend via Helm
       - name: Deploy backend via Helm
@@ -104,8 +102,12 @@ jobs:
             --namespace $NAMESPACE \
             --set image.repository=$BACKEND_IMAGE \
             --set image.tag=${{ github.sha }} \
-            --set appVersion=v${{ github.run_number }} \
-            --values $HELM_DIR/secrets.yaml || true
+            --set appVersion=v${{ github.run_number }}
+
+      - name: Verify backend rollout
+        run: |
+          kubectl rollout status deployment/backend -n $NAMESPACE --timeout=180s || \
+          (echo "Backend rollout failed, rolling back..." && helm rollback backend 1 -n $NAMESPACE)
 
       # Deploy Frontend via Helm
       - name: Deploy frontend via Helm
@@ -114,5 +116,9 @@ jobs:
             --namespace $NAMESPACE \
             --set image.repository=$FRONTEND_IMAGE \
             --set image.tag=${{ github.sha }} \
-            --set appVersion=v${{ github.run_number }} \
-            --values $HELM_DIR/secrets.yaml || true
+            --set appVersion=v${{ github.run_number }}
+
+      - name: Verify frontend rollout
+        run: |
+          kubectl rollout status deployment/frontend -n $NAMESPACE --timeout=180s || \
+          (echo "Frontend rollout failed, rolling back..." && helm rollback frontend 1 -n $NAMESPACE)

@@ -2,7 +2,7 @@ replicaCount: 2
 
 image:
   repository: omprasadkade/scopbot-backend
-  tag: v1
+  tag: latest
   pullPolicy: Always
 
 service:
@@ -30,3 +30,7 @@ args:
   - "8000"
   - "--limit-max-requests"
   - "500000000"
+keyvault:
+  name: kv-scopebot
+  tenantId: 4ac50105-0c66-404e-a107-7cbd8a9a6442
+  clientId: f0762b13-92cb-44e1-be77-ee412fc9f172
