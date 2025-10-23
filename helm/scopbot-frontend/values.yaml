@@ -2,7 +2,7 @@ replicaCount: 2
 
 image:
   repository: omprasadkade/scopbot-frontend
-  tag: v1
+  tag: latest
   pullPolicy: Always
 
 service:
