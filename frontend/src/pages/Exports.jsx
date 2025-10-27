@@ -819,6 +819,7 @@ export default function Exports() {
 
                         {row.map((cell, j) => {
                           const header = excelPreview.headers[j]?.toLowerCase();
+                          let statusColor = "";
                           if (!isTotal && header === "status") {
                             const val = String(cell || "").toLowerCase();
                             if (val.includes("complete"))
