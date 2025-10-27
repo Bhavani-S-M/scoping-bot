@@ -79,7 +79,7 @@ jobs:
       - name: Run frontend tests
         run: |
           cd frontend
-          npm test -- --watchAll=false
+          npm run test
   build-and-deploy:
     runs-on: ubuntu-latest
     needs: testing
