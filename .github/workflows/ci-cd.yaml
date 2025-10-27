@@ -94,6 +94,14 @@ jobs:
           else
             echo "cluster-issuer.yaml not found — skipping"
           fi
+      # Deploy Postgres via Helm
+      - name: Deploy Postgres via Helm
+        run: |
+          helm upgrade --install scopbot-postgres $HELM_DIR/scopbot-postgres \
+            --namespace $NAMESPACE \
+            --set persistence.size=8Gi \
+            --set persistence.storageClass=managed-premium
+
       # Deploy Backend via Helm
       - name: Deploy backend via Helm
         run: |
