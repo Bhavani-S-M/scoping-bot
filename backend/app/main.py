@@ -14,19 +14,6 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# ---------- Startup ----------
-@app.on_event("startup")
-async def on_startup():
-    # Create DB tables
-    print("Creating database tables...")
-    async with async_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    print("Database tables created.")
-
-    # Ensure Blob container exists
-    await azure_blob.init_container()
-    print("Azure Blob container ready.")
-
 # ---------- CORS ----------
 app.add_middleware(
     CORSMiddleware,
