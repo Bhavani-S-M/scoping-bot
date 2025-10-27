@@ -6,6 +6,23 @@ import { useRateCards } from "../contexts/RateCardContext";
 import { File, Trash2, Upload } from "lucide-react";
 import { toast } from "react-toastify";
 
+const DOMAIN_COMPLIANCE_MAP = {
+  fintech: ["RBI-KYC-AML","NPCI-UPI","UIDAI-Aadhaar","DPDP-2023","CERT-In-2022","IT-Rules-2021","PCI-DSS","ISO-27001","SOC-2"],
+  healthtech: ["ABDM-NDHM","NABH","DPDP-2023","CERT-In-2022","IT-Rules-2021","ISO-27001"],
+  govtech: ["UIDAI-Aadhaar","IT-Rules-2021","CERT-In-2022","DPDP-2023","WCAG"],
+  ecommerce: ["ONDC","DPDP-2023","IT-Rules-2021","CERT-In-2022","PCI-DSS","ISO-27001"],
+  insurtech: ["IRDAI-IT","DPDP-2023","CERT-In-2022","ISO-27001","SOC-2"],
+  edtech: ["DPDP-2023","IT-Rules-2021","CERT-In-2022","WCAG"],
+  "smart mobility": ["NCMC","RBI-KYC-AML","NPCI-UPI","DPDP-2023"],
+  "b2b saas": ["ISO-27001","SOC-2","DPDP-2023"],
+  agritech: ["FSSAI","DPDP-2023"],
+  logistics: ["ISO-27001","SOC-2","DPDP-2023"],
+  "energy/utilities": ["CEA-CERC","DPDP-2023","CERT-In-2022"],
+  civictech: ["IT-Rules-2021","CERT-In-2022","DPDP-2023","WCAG"],
+  regtech: ["RBI-KYC-AML","UIDAI-Aadhaar","DPDP-2023","ISO-27001"],
+  other: ["DPDP-2023","CERT-In-2022","IT-Rules-2021"],
+};
+
 export default function ProjectForm({ onSubmit }) {
   const navigate = useNavigate();
   const { createProject, createProjectWithScope, generateQuestions, generateRefinedScope, updateQuestions } = useProjects();
@@ -60,24 +77,6 @@ export default function ProjectForm({ onSubmit }) {
   const INDIA_VALUES  = COMPLIANCE_OPTIONS_IN.map(o => o.value);
   const GLOBAL_VALUES = COMPLIANCE_OPTIONS_GLOBAL.map(o => o.value);
   const ALL_VALUES    = [...INDIA_VALUES, ...GLOBAL_VALUES];
-
-  // Domain → Recommended compliance
-  const DOMAIN_COMPLIANCE_MAP = {
-    fintech: ["RBI-KYC-AML","NPCI-UPI","UIDAI-Aadhaar","DPDP-2023","CERT-In-2022","IT-Rules-2021","PCI-DSS","ISO-27001","SOC-2"],
-    healthtech: ["ABDM-NDHM","NABH","DPDP-2023","CERT-In-2022","IT-Rules-2021","ISO-27001"],
-    govtech: ["UIDAI-Aadhaar","IT-Rules-2021","CERT-In-2022","DPDP-2023","WCAG"],
-    ecommerce: ["ONDC","DPDP-2023","IT-Rules-2021","CERT-In-2022","PCI-DSS","ISO-27001"],
-    insurtech: ["IRDAI-IT","DPDP-2023","CERT-In-2022","ISO-27001","SOC-2"],
-    edtech: ["DPDP-2023","IT-Rules-2021","CERT-In-2022","WCAG"],
-    "smart mobility": ["NCMC","RBI-KYC-AML","NPCI-UPI","DPDP-2023"],
-    "b2b saas": ["ISO-27001","SOC-2","DPDP-2023"],
-    agritech: ["FSSAI","DPDP-2023"],
-    logistics: ["ISO-27001","SOC-2","DPDP-2023"],
-    "energy/utilities": ["CEA-CERC","DPDP-2023","CERT-In-2022"],
-    civictech: ["IT-Rules-2021","CERT-In-2022","DPDP-2023","WCAG"],
-    regtech: ["RBI-KYC-AML","UIDAI-Aadhaar","DPDP-2023","ISO-27001"],
-    other: ["DPDP-2023","CERT-In-2022","IT-Rules-2021"],
-  };
 
   const normalize = (s) => (s || "").toLowerCase().trim();
   const recommendForDomain = useCallback((domain) => {

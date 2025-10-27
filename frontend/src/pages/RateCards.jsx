@@ -26,7 +26,7 @@ export default function RateCardPreview() {
 
   useEffect(() => {
     if (selectedCompany) loadRateCards(selectedCompany);
-  }, [selectedCompany]);
+  }, [selectedCompany, loadRateCards]);
 
   //  Add editable blank row
   const addRow = () => {

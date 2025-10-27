@@ -21,7 +21,6 @@ export default function Login() {
       }
 
       // Fetch user profile
-      const me = await authApi.getMe();
       navigate("/dashboard");
     } catch (err) {
       console.error(" Login error:", err);

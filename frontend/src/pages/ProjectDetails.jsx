@@ -10,18 +10,18 @@ export default function ProjectDetails() {
   const [project, setProject] = useState(null);
   const [loading, setLoading] = useState(false);
 
-  const loadProject = async () => {
-    try {
-      const res = await projectApi.getProject(id);
-      setProject(res.data);
-    } catch (err) {
-      console.error("Failed to fetch project:", err);
-    }
-  };
-
   useEffect(() => {
+    const loadProject = async () => {
+      try {
+        const res = await projectApi.getProject(id);
+        setProject(res.data);
+      } catch (err) {
+        console.error("Failed to fetch project:", err);
+      }
+    };
+
     loadProject();
-  }, [id, loadProject]);
+  }, [id]); 
 
   const regenerateScope = async () => {
     try {

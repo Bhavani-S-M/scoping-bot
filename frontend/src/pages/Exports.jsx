@@ -830,7 +830,7 @@ export default function Exports() {
                           }
 
                           return (
-                            <td key={j} className="px-3 py-2 border">
+                            <td key={j} className={`px-3 py-2 border ${statusColor}`}>
                               {isTotal ? (
                                 cell
                               ) : (
