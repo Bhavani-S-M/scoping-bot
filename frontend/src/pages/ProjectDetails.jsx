@@ -21,7 +21,7 @@ export default function ProjectDetails() {
 
   useEffect(() => {
     loadProject();
-  }, [id]);
+  }, [id, loadProject]);
 
   const regenerateScope = async () => {
     try {

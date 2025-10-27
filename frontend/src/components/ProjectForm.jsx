@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useProjects } from "../contexts/ProjectContext";
 import { useRateCards } from "../contexts/RateCardContext";
@@ -80,7 +80,7 @@ export default function ProjectForm({ onSubmit }) {
   };
 
   const normalize = (s) => (s || "").toLowerCase().trim();
-  const recommendForDomain = (domain) => {
+  const recommendForDomain = useCallback((domain) => {
     const d = normalize(domain);
     if (DOMAIN_COMPLIANCE_MAP[d]) return DOMAIN_COMPLIANCE_MAP[d];
     if (/(bank|nbfc|upi|lending|fin)/.test(d)) return DOMAIN_COMPLIANCE_MAP["fintech"];
@@ -96,7 +96,7 @@ export default function ProjectForm({ onSubmit }) {
     if (/(energy|discom|utility|power)/.test(d)) return DOMAIN_COMPLIANCE_MAP["energy/utilities"];
     if (/(regtech|kyc|aml)/.test(d)) return DOMAIN_COMPLIANCE_MAP["regtech"];
     return DOMAIN_COMPLIANCE_MAP["other"];
-  };
+  }, []);
 
   const ALL_COMPLIANCE = [...COMPLIANCE_OPTIONS_IN, ...COMPLIANCE_OPTIONS_GLOBAL];
   const labelFor = (v) => ALL_COMPLIANCE.find((o) => o.value === v)?.label || v;

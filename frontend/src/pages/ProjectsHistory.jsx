@@ -21,7 +21,7 @@ export default function ProjectsHistory() {
 
   useEffect(() => {
     fetchProjects();
-  }, []);
+  }, [fetchProjects]);
 
   const filtered = useMemo(() => {
     let list = [...projects];

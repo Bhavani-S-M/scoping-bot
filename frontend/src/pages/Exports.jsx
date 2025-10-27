@@ -269,7 +269,7 @@ export default function Exports() {
       isActive = false;
       window.removeEventListener("focus", refreshOnFocus);
     };
-  }, [id]);
+  }, [id, incomingDraft, getFinalizedScope]);
 
   useEffect(() => {
     if (id) loadPrompts(id);
@@ -289,7 +289,7 @@ export default function Exports() {
 
     //  Always clear skip flag after handling one JSON update
     skipResetRef.current = false;
-  }, [jsonText]);
+  }, [jsonText, isFinalized]);
 
   // Keep finalized state stable and remove unnecessary reset logic
   const prevJsonRef = useRef("");
@@ -338,7 +338,7 @@ export default function Exports() {
         toast.error("Failed to load PDF preview.");
       }
     })();
-  }, [activeTab, parsedDraft, isFinalized, id, getPdfBlob, previewPdf]);
+  }, [activeTab, parsedDraft, isFinalized, id, getPdfBlob, previewPdf, previewPdfUrl]);
 
   // Auto-refresh Excel preview
   useEffect(() => {
@@ -400,7 +400,7 @@ export default function Exports() {
         setExcelPreview({ headers: [], rows: [] });
       }
     }
-  }, [parsedDraft, excelSection, activeTab]);
+  }, [parsedDraft, excelSection, activeTab, activeCurrency]);
 
   // Auto-refresh finalized scope when navigating back to Exports tab
   useEffect(() => {
@@ -419,7 +419,7 @@ export default function Exports() {
 
     // Run immediately whenever this component mounts or URL changes
     refreshScope();
-  }, [id, location.key]);
+  }, [id, location.key, getFinalizedScope]);
     
   // ---------- Handle Finalize Scope ----------
   const handleFinalize = async () => {
@@ -819,8 +819,6 @@ export default function Exports() {
 
                         {row.map((cell, j) => {
                           const header = excelPreview.headers[j]?.toLowerCase();
-                          let statusColor = "";
-
                           if (!isTotal && header === "status") {
                             const val = String(cell || "").toLowerCase();
                             if (val.includes("complete"))
