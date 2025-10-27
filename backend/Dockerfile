@@ -1,7 +1,4 @@
-
-# -------------------------------
 # Stage 1: Build dependencies
-# -------------------------------
 FROM python:3.11-slim AS builder
 
 WORKDIR /app
@@ -17,12 +14,8 @@ RUN pip install --upgrade pip \
  && pip install --prefix=/install --no-cache-dir -r requirements.txt
 
  
-
-# -------------------------------
 # Stage 2: Runtime image
-# -------------------------------
 FROM python:3.11-slim
-
 WORKDIR /app
 
 # Install Graphviz system binary (needed for architecture diagrams)

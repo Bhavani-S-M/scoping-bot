@@ -1,6 +1,4 @@
-# -------------------------------
 # Stage 1: Build React app
-# -------------------------------
 FROM node:18-alpine AS builder
 
 WORKDIR /app
@@ -13,10 +11,7 @@ RUN npm ci --silent
 COPY . .
 RUN npm run build
 
-
-# -------------------------------
 # Stage 2: Serve static build with Nginx
-# -------------------------------
 FROM nginx:alpine
 
 # Remove default Nginx web files
@@ -25,7 +20,7 @@ RUN rm -rf /usr/share/nginx/html/*
 # Copy React build output
 COPY --from=builder /app/dist /usr/share/nginx/html
 
-# ✅ Custom Nginx config (SPA + correct MIME for .mjs/.js)
+# Custom Nginx config (SPA + correct MIME for .mjs/.js)
 RUN cat <<'EOF' > /etc/nginx/conf.d/default.conf
 server {
     listen 80;
