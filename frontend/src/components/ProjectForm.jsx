@@ -116,7 +116,6 @@ export default function ProjectForm({ onSubmit }) {
   const [scopeLoading, setScopeLoading] = useState(false);
   const [questionLoading, setQuestionLoading] = useState(false);
   const [saveLoading, setSaveLoading] = useState(false);
-  const [answerLoading, setAnswerLoading] = useState(false);
   const [refineLoading, setRefineLoading] = useState(false);
   const [validationErrors, setValidationErrors] = useState({});
   const [recommended, setRecommended] = useState([]);
@@ -130,7 +129,8 @@ export default function ProjectForm({ onSubmit }) {
 
   useEffect(() => {
     setRecommended(recommendForDomain(form.domain));
-  }, [form.domain]);
+  }, [form.domain, recommendForDomain]);
+
 
   // Validation
   const validateField = (name, value) => {
@@ -206,13 +206,6 @@ export default function ProjectForm({ onSubmit }) {
   const handleFileChange = (e) => {
     const newFiles = Array.from(e.target.files || []).map((file) => ({ file, type: "" }));
     setForm((prev) => ({ ...prev, files: [...prev.files, ...newFiles] }));
-  };
-  const handleFileTypeChange = (index, type) => {
-    setForm((prev) => {
-      const updated = [...prev.files];
-      updated[index].type = type;
-      return { ...prev, files: updated };
-    });
   };
   const handleDrop = (e) => {
     e.preventDefault();

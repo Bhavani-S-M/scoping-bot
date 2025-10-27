@@ -21,22 +21,17 @@ import {
 } from "recharts";
 
 export default function Dashboard() {
-  const { projects, fetchProjects, deleteProject, deleteAllProjects } = useProjects();
+  const { projects, fetchProjects, deleteProject } = useProjects();
   const { user } = useAuth();
 
   useEffect(() => {
     fetchProjects();
-  }, []);
+  }, [fetchProjects]);
+
 
   const handleDelete = async (id) => {
     if (window.confirm("Are you sure you want to delete this project?")) {
       await deleteProject(id);
-    }
-  };
-
-  const handleDeleteAll = async () => {
-    if (window.confirm("Are you sure you want to delete ALL projects?")) {
-      await deleteAllProjects();
     }
   };
 

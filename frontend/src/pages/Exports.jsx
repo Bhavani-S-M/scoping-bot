@@ -48,7 +48,6 @@ const formatCurrency = (v, currency = "USD") => {
 export default function Exports() {
   const { id } = useParams();
   const location = useLocation();
-  const mode = new URLSearchParams(location.search).get("mode");
   const { finalizeScope, getFinalizedScope, regenerateScope } = useProjects();
   const chatEndRef = useRef(null);
   const { previewPdf, getPdfBlob } = useExport();
@@ -101,7 +100,7 @@ export default function Exports() {
   });
   const [regenPrompt, setRegenPrompt] = useState("");
   const [regenLoading, setRegenLoading] = useState(false);
-  const { prompts, loadPrompts, addPrompt, clearPrompts, setPrompts } = usePrompts();
+  const { prompts, loadPrompts, addPrompt, clearPrompts } = usePrompts();
   const textareaRef = useRef(null);
   useEffect(() => {
     if (chatEndRef.current && Array.isArray(prompts) && prompts.length > 0) {

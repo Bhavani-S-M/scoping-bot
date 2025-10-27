@@ -15,7 +15,25 @@ export function RateCardProvider({ children }) {
   const [selectedCompany, setSelectedCompany] = useState("");
   const [rateCards, setRateCards] = useState([]);
   const [loading, setLoading] = useState(false);
+  // --- Load Rate Cards ---
+  const loadRateCards = useCallback(async (companyId) => {
+    if (!companyId) {
+      setRateCards([]);
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await rateCardApi.listRateCards(companyId);
+      setRateCards(res.data || []);
+    } catch (err) {
+      console.error(" loadRateCards error:", err);
+      toast.error("Failed to load rate cards");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
+  // --- Load Companies ---
   const loadCompanies = useCallback(async () => {
     try {
       const res = await rateCardApi.listCompanies();
@@ -38,31 +56,14 @@ export function RateCardProvider({ children }) {
       }
     } catch (err) {
       if (err?.response?.status === 401) {
-        console.log(" Skipping loadCompanies — user not logged in");
+        console.log("Skipping loadCompanies — user not logged in");
         return;
       }
       console.error(" loadCompanies error:", err);
       toast.error("Failed to load companies");
     }
-  }, [selectedCompany]);
+  }, [selectedCompany, loadRateCards]);
 
-  // LOAD RATE CARDS
-  const loadRateCards = useCallback(async (companyId) => {
-    if (!companyId) {
-      setRateCards([]);
-      return;
-    }
-    setLoading(true);
-    try {
-      const res = await rateCardApi.listRateCards(companyId);
-      setRateCards(res.data || []);
-    } catch (err) {
-      console.error(" loadRateCards error:", err);
-      toast.error("Failed to load rate cards");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
 
   const createCompany = async (data) => {
     try {

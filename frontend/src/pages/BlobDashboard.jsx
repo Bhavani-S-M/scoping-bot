@@ -125,7 +125,8 @@ export default function BlobDashboard() {
 
   useEffect(() => {
     loadExplorer(activeBase);
-  }, [activeBase]);
+  }, [activeBase, loadExplorer]);
+
 
   const onUploadFile = async (e) => {
     const f = e.target.files[0];
