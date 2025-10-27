@@ -2,3 +2,4 @@ backend/.env
 sample.txt
 k8s/
 nginx.conf
+secrets.yaml
