@@ -1,5 +1,93 @@
-backend/.env
-sample.txt
-k8s/
-nginx.conf
-secrets.yaml
+# ===========================================
+# GLOBAL IGNORE (Backend + System + Editors)
+# ===========================================
+
+# OS-generated files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE / Editor settings
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-project
+*.sublime-workspace
+
+# Logs and outputs
+*.log
+*.out
+*.err
+
+# ===========================================
+# PYTHON / FASTAPI BACKEND
+# ===========================================
+
+# Python cache and compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+*/venv/
+.env/
+*/.venv/
+env/
+ENV/
+
+# Build and packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Unit test / coverage
+.coverage
+.cache/
+.tox/
+.pytest_cache/
+.mypy_cache/
+htmlcov/
+pytestdebug.log
+
+# Jupyter checkpoints (if used)
+.ipynb_checkpoints/
+
+# Local environment variables
+*.env
+.env.local
+.env.*.local
+
+# ===========================================
+# BACKEND PROJECT-SPECIFIC IGNORES
+# ===========================================
+
+# Local database and Chroma files
+backend/chroma_db/
+backend/chroma_db/**/*.bin
+backend/chroma_db/chroma.sqlite3
+
+# Local storage with generated or uploaded data
+backend/local_storage/
+backend/uploads/
+
+# Knowledge base docs (binary data, keep only in source control if necessary)
+backend/knowledgebase_base/docs/
+
+# Temporary scripts or debug
+backend/testscript.py
+
+# Alembic auto-generated cache (but keep versions)
+backend/alembic/__pycache__/
+
+# ===========================================
+# FRONTEND BUILD (Handled in frontend/.gitignore)
+# ===========================================
+
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+
+# Lock files backup
+package-lock.json.*
