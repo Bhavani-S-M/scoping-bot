@@ -7,6 +7,7 @@ import {
 } from "react";
 import rateCardApi from "../api/rateCardApi";
 import { toast } from "react-toastify";
+import { useAuth } from "../contexts/AuthContext";
 
 const RateCardContext = createContext();
 
@@ -15,6 +16,8 @@ export function RateCardProvider({ children }) {
   const [selectedCompany, setSelectedCompany] = useState("");
   const [rateCards, setRateCards] = useState([]);
   const [loading, setLoading] = useState(false);
+  const { user } = useAuth();
+
   // --- Load Rate Cards ---
   const loadRateCards = useCallback(async (companyId) => {
     if (!companyId) {
@@ -151,13 +154,14 @@ export function RateCardProvider({ children }) {
 
   // AUTO LOAD COMPANIES ON LOGIN
   useEffect(() => {
-    const token = localStorage.getItem("access_token");
-    if (!token) {
-      console.log("Skipping auto load — user not logged in yet");
-      return;
+    if (user) {
+      console.log("User logged in, loading companies...");
+      loadCompanies();
+    } else {
+      console.log("Skipping loadCompanies — no user yet");
     }
-    loadCompanies();
-  }, [loadCompanies]);
+  }, [user, loadCompanies]);
+
 
   // PROVIDER VALUE
   return (

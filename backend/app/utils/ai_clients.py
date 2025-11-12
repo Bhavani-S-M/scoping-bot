@@ -1,71 +1,144 @@
-# app/utils/ai_clients.py
 from __future__ import annotations
 import logging
+import os
+import time
+import requests
 from functools import lru_cache
-from typing import Optional
-from openai import AzureOpenAI
-from azure.search.documents import SearchClient
-from azure.core.credentials import AzureKeyCredential
-from app.config import config
+from typing import List, Dict, Any
+
+from qdrant_client import QdrantClient
+from qdrant_client.http import models
+from app.config.config import (
+    OLLAMA_HOST,
+    OLLAMA_MODEL,
+    OLLAMA_EMBED_MODEL,
+    QDRANT_HOST,
+    QDRANT_PORT,
+    QDRANT_COLLECTION,
+    VECTOR_DIM,
+)
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 __all__ = [
-    "get_azure_openai_client",
-    "get_azure_openai_deployment",
-    "get_search_client",
+    "get_llm_client",
+    "get_embed_client",
+    "embed_text_ollama",
+    "get_qdrant_client",
 ]
 
-# Azure OpenAI Client
+# -------------------------------------------------------------------------
+# Ollama Configuration
+# -------------------------------------------------------------------------
 @lru_cache(maxsize=1)
-def get_azure_openai_client() -> Optional[AzureOpenAI]:
-    api_key = getattr(config, "AZURE_OPENAI_KEY", None)
-    endpoint = getattr(config, "AZURE_OPENAI_ENDPOINT", None)
-    api_version = getattr(config, "AZURE_OPENAI_VERSION", "2024-02-01")
-
-    if not api_key or not endpoint:
-        logger.warning("Azure OpenAI config missing; client not created.")
-        return None
-    try:
-        client = AzureOpenAI(
-            api_key=api_key,
-            azure_endpoint=endpoint,
-            api_version=api_version,
-        )
-        logger.info(" Initialized Azure OpenAI client")
-        return client
-    except Exception:
-        logger.exception(" Failed to initialize Azure OpenAI client.")
-        return None
+def get_llm_client() -> dict:
+    """Return Ollama configuration for text generation."""
+    return {"host": OLLAMA_HOST, "model": OLLAMA_MODEL}
 
 
-def get_azure_openai_deployment() -> Optional[str]:
-    return getattr(config, "AZURE_OPENAI_DEPLOYMENT", None)
-
-
-
-def get_azure_openai_embedding_deployment() -> Optional[str]:
-    return getattr(config, "AZURE_OPENAI_EMBEDDING_DEPLOYMENT", None)
-
-
-# Azure AI Search Client
 @lru_cache(maxsize=1)
-def get_search_client() -> Optional[SearchClient]:
-    search_key = getattr(config, "AZURE_SEARCH_KEY", None)
-    search_endpoint = getattr(config, "AZURE_SEARCH_ENDPOINT", None)
-    index_name = getattr(config, "AZURE_SEARCH_INDEX")
+def get_embed_client() -> dict:
+    """Return Ollama embedding configuration."""
+    return {"host": OLLAMA_HOST, "model": OLLAMA_EMBED_MODEL, "vector_dim": VECTOR_DIM}
 
-    if not search_key or not search_endpoint:
-        logger.warning("Azure Cognitive Search config missing; client not created.")
-        return None
+
+# -------------------------------------------------------------------------
+# Embedding generator
+# -------------------------------------------------------------------------
+def embed_text_ollama(texts: List[str]) -> List[List[float]]:
+    """
+    Generate embeddings using Ollama embedding model.
+    Retries once on transient errors, auto-detects dimension if needed.
+    """
+    embed_cfg = get_embed_client()
+    url = f"{embed_cfg['host'].rstrip('/')}/api/embed"
+    model = embed_cfg["model"]
+    expected_dim = int(embed_cfg["vector_dim"])
+
+    if not isinstance(texts, list):
+        texts = [str(texts)]
+    texts = [t.strip() for t in texts if t and t.strip()]
+    if not texts:
+        logger.warning("⚠️ No valid texts provided for embedding.")
+        return []
+
+    payload = {"model": model, "input": texts}
+
+    for attempt in range(2):  # Retry once
+        try:
+            resp = requests.post(url, json=payload, timeout=30)
+            resp.raise_for_status()
+            data = resp.json()
+
+            embeddings = (
+                data.get("embedding")
+                or data.get("embeddings")
+                or data.get("data")
+                or []
+            )
+
+            # Normalize nested structure
+            if isinstance(embeddings, list) and embeddings and isinstance(embeddings[0], (int, float)):
+                embeddings = [embeddings]
+            elif isinstance(embeddings, list) and isinstance(embeddings[0], dict):
+                embeddings = [d.get("embedding", []) for d in embeddings if "embedding" in d]
+
+            valid_vectors = [
+                v for v in embeddings
+                if isinstance(v, list)
+                and len(v) > 0
+                and all(isinstance(x, (int, float)) for x in v)
+            ]
+
+            if not valid_vectors:
+                raise ValueError("Empty or invalid embedding vectors")
+
+            dim = len(valid_vectors[0])
+            if dim != expected_dim:
+                logger.warning(
+                    f"⚠️ Embedding dimension mismatch — got {dim}, expected {expected_dim}. "
+                    f"Update VECTOR_DIM in config if model changed."
+                )
+
+            return valid_vectors
+
+        except Exception as e:
+            logger.error(f"Embedding attempt {attempt+1} failed: {e}")
+            if attempt == 0:
+                time.sleep(1.5)
+                continue
+            else:
+                logger.error("❌ Ollama embedding failed after retry.")
+                return []
+
+
+# -------------------------------------------------------------------------
+# Qdrant Client
+# -------------------------------------------------------------------------
+@lru_cache(maxsize=1)
+def get_qdrant_client() -> QdrantClient:
+    """Initialize or reuse a Qdrant client (auto-creates collection if missing)."""
     try:
-        client = SearchClient(
-            endpoint=search_endpoint,
-            index_name=index_name,
-            credential=AzureKeyCredential(search_key),
-        )
-        logger.info(f" Initialized Azure Search client for index: {index_name}")
+        client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
+
+        collections = client.get_collections().collections
+        existing = [c.name for c in collections]
+
+        if QDRANT_COLLECTION not in existing:
+            client.create_collection(
+                collection_name=QDRANT_COLLECTION,
+                vectors_config=models.VectorParams(
+                    size=VECTOR_DIM,
+                    distance=models.Distance.COSINE,
+                ),
+            )
+            logger.info(f"✅ Created Qdrant collection '{QDRANT_COLLECTION}' ({VECTOR_DIM} dims)")
+        else:
+            logger.info(f"ℹ️ Qdrant collection '{QDRANT_COLLECTION}' already exists")
+
         return client
-    except Exception:
-        logger.exception(" Failed to initialize Azure Cognitive Search client.")
-        return None
+
+    except Exception as e:
+        logger.exception(f"❌ Failed to initialize Qdrant client: {e}")
+        raise

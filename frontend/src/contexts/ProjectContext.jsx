@@ -1,5 +1,5 @@
 // src/contexts/ProjectContext.js
-import { createContext, useState, useContext } from "react";
+import { createContext, useState, useContext, useCallback } from "react";
 import projectApi from "../api/projectApi";
 import exportApi from "../api/exportApi";
 
@@ -18,7 +18,7 @@ export const ProjectProvider = ({ children }) => {
   const [lastPreviewScope, setLastPreviewScope] = useState(null);
   const [lastRedirectUrl, setLastRedirectUrl] = useState(null);
 
-  const fetchProjects = async () => {
+  const fetchProjects = useCallback(async () => {
     try {
       setLoading(true);
       const res = await projectApi.getProjects();
@@ -30,8 +30,8 @@ export const ProjectProvider = ({ children }) => {
     } finally {
       setLoading(false);
     }
-  };
-
+  }, []);
+  
   const getProjectById = async (id) => {
     try {
       const res = await projectApi.getProject(id);

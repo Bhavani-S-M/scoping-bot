@@ -1,6 +1,6 @@
 # app/utils/scope_engine.py
 from __future__ import annotations
-import json, re, logging, math, os, tempfile,anyio,pytesseract, openpyxl,tiktoken, pytz, graphviz
+import json, re, logging, math, os, tempfile,anyio,pytesseract, openpyxl,tiktoken, pytz, graphviz,requests
 from app import models
 from calendar import monthrange
 from pdfminer.high_level import extract_text as extract_pdf_text
@@ -8,7 +8,7 @@ from docx import Document
 from pptx import Presentation
 from io import BytesIO
 from PIL import Image
-from azure.search.documents.models import VectorizedQuery
+from app.config.config import QDRANT_COLLECTION
 from typing import Dict, Any, List
 from datetime import datetime, timedelta
 from app.utils import azure_blob
@@ -16,19 +16,34 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from app.utils.ai_clients import (
-    get_azure_openai_client,
-    get_azure_openai_deployment,
-    get_azure_openai_embedding_deployment,
-    get_search_client,
+    get_llm_client,
+    get_embed_client,
+    get_qdrant_client,
+    embed_text_ollama,
 )
+
 
 logger = logging.getLogger(__name__)
 
-# Init Azure services
-client = get_azure_openai_client()
-deployment = get_azure_openai_deployment()
-emb_model = get_azure_openai_embedding_deployment()
-search_client = get_search_client()
+# Init AI services
+llm_cfg = get_llm_client()
+embed_cfg = get_embed_client()
+qdrant = get_qdrant_client()
+
+def ollama_chat(prompt: str, model: str = llm_cfg["model"], temperature: float = 0.7) -> str:
+    """Call Ollama to generate text from a prompt."""
+    try:
+        resp = requests.post(
+            f"{llm_cfg['host']}/api/generate",
+            json={"model": model, "prompt": prompt, "temperature": temperature, "stream": False},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return data.get("response", "").strip()
+    except Exception as e:
+        logger.error(f"Ollama chat failed: {e}")
+        return ""
+
 
 PROJECTS_BASE = "projects"
 
@@ -196,113 +211,71 @@ async def _extract_text_from_files(files: List[dict]) -> str:
     return "\n\n".join(results)
 
 
-
-
-def _rag_retrieve(query: str, k: int = 3, expand_neighbors: bool = True) -> List[Dict]:
+def _rag_retrieve(query: str, k: int = 5) -> List[Dict]:
     """
-    Retrieve semantically similar chunks for RAG.
-    Trims results so total tokens <= model context limit (with buffer).
+    Retrieve semantically similar chunks from Qdrant for RAG.
+    Uses Ollama embedding model and returns list of matched chunks.
+    Skips retrieval if no valid embedding found.
     """
-    global emb_model
-
-    if not search_client or not client:
-        return []
-
     try:
-        # Embedding for query
-        q_emb = client.embeddings.create(model=emb_model, input=query).data[0].embedding
+        q_emb_list = embed_text_ollama([query])
 
-        # Vector query
-        vector_query = VectorizedQuery(
-            vector=q_emb,
-            fields="text_vector",
-        )
+        # Skip if no valid embeddings returned
+        if not q_emb_list or not q_emb_list[0]:
+            logger.warning("⚠️ No valid embedding generated — skipping Qdrant retrieval.")
+            return []
 
-        results = search_client.search(
-            search_text=query,
-            vector_queries=[vector_query],
-            select=["chunk_id", "parent_id", "chunk", "title"],
-            top=k
+        q_emb = q_emb_list[0]
+
+        # Sanity check vector dimension
+        if not isinstance(q_emb, list) or len(q_emb) == 0:
+            logger.warning("⚠️ Empty embedding vector — skipping retrieval.")
+            return []
+
+        client = get_qdrant_client()
+        results = client.search(
+            collection_name=QDRANT_COLLECTION,
+            query_vector=q_emb,
+            limit=k,
+            with_payload=True
         )
 
         hits = []
-        for doc in results:
+        for r in results:
+            payload = r.payload or {}
             hits.append({
-                "id": doc["chunk_id"],
-                "parent_id": doc.get("parent_id"),
-                "content": doc["chunk"],
-                "title": doc.get("title")
+                "id": payload.get("chunk_id", str(r.id)),
+                "parent_id": payload.get("parent_id"),
+                "content": payload.get("chunk", ""),
+                "title": payload.get("title", ""),
+                "score": r.score,
             })
 
-        # Expand neighbors
-        if expand_neighbors and hits:
-            expanded = []
-            for h in hits:
-                expanded.append(h)
-                if "_" in h["id"]:
-                    try:
-                        base, idx = h["id"].rsplit("_", 1)
-                        idx = int(idx)
-                        for nid in [f"{base}_{idx-1}", f"{base}_{idx+1}"]:
-                            try:
-                                neighbor = search_client.get_document(nid)
-                                if neighbor:
-                                    expanded.append({
-                                        "id": neighbor["chunk_id"],
-                                        "parent_id": neighbor.get("parent_id"),
-                                        "content": neighbor["chunk"],
-                                        "title": neighbor.get("title")
-                                    })
-                            except Exception:
-                                pass
-                    except Exception:
-                        pass
-            hits = expanded
-
+        # Group by parent_id for consistency
         grouped = {}
         for h in hits:
-            grouped.setdefault(h["parent_id"], []).append(h)
+            grouped.setdefault(h["parent_id"], []).append({
+                "id": h["id"],
+                "content": h["content"],
+                "title": h["title"],
+                "score": h["score"],
+            })
 
-        # ---- Token budget check ----
-        model_name = deployment
-        tokenizer = tiktoken.encoding_for_model(model_name)
-        context_limit = 128000
-        max_tokens = context_limit - 4000 
-        used_tokens = 0
-
-        ordered = []
-        for pid, docs in grouped.items():
-            safe_chunks = []
-            for d in docs:
-                tokens = len(tokenizer.encode(d["content"]))
-                if used_tokens + tokens > max_tokens:
-                    break
-                safe_chunks.append(d)
-                used_tokens += tokens
-
-            if safe_chunks:
-                ordered.append({
-                    "parent_id": pid,
-                    "chunks": safe_chunks,
-                    "title": safe_chunks[0].get("title")
-                })
-
-        logger.info(f"RAG retrieve kept {used_tokens} tokens (limit {max_tokens})")
-
-        return ordered
+        return [
+            {"parent_id": pid, "chunks": chs}
+            for pid, chs in grouped.items()
+        ]
 
     except Exception as e:
-        logger.warning(f"RAG retrieve failed: {e}")
+        logger.warning(f"RAG retrieval (Qdrant) failed: {e}")
         return []
 
-
-def _build_scope_prompt(rfp_text: str, kb_chunks: List[str], project=None, model_name: str = "gpt-4o", questions_context: str | None = None) -> str:
+def _build_scope_prompt(rfp_text: str, kb_chunks: List[str], project=None, questions_context: str | None = None) -> str:
     import datetime, tiktoken
 
     # Tokenizer
-    tokenizer = tiktoken.encoding_for_model(model_name)
-
-    # Safe token budget (GPT-4o = 128k, keep ~4k for completion & system messages)
+    tokenizer = tiktoken.get_encoding("cl100k_base")
+    # Safe token budget (128k, keep ~4k for completion & system messages)
     context_limit = 128000
     max_total_tokens = context_limit - 4000
     used_tokens = 0
@@ -350,7 +323,7 @@ def _build_scope_prompt(rfp_text: str, kb_chunks: List[str], project=None, model
 
     return (
         "You are an expert AI project planner.\n"
-        "Use the RFP/project text as the **primary source**"
+        "Use the RFP/project text as the **primary source** \n"
         "Use questions and answers to clarify ambiguities.\n"
         "but enrich missing fields with the Knowledge Base context (if relevant).\n"
         "Return ONLY valid JSON (no prose, no markdown, no commentary).\n\n"
@@ -374,12 +347,12 @@ def _build_scope_prompt(rfp_text: str, kb_chunks: List[str], project=None, model
         '      "Resources": string | null,\n'
         '      "Start Date": "yyyy-mm-dd",\n'
         '      "End Date": "yyyy-mm-dd",\n'
-        '      "Effort Months": int\n'
+        '      "Effort Months": number\n'
         "    }\n"
         "  ],\n"
         '  "resourcing_plan": []\n'
         "}\n\n"
-        "Scheduling Rules"
+        "Scheduling Rules: \n"
         f"- The first activity must always start today ({today_str}).\n"
         "- If two activities are **independent**, overlap their timelines by **70–80%** of their duration (not full overlap)."
         "- If one activity **depends** on another, allow a small overlap of **10-15%** near the end of the predecessor if feasible."
@@ -396,7 +369,7 @@ def _build_scope_prompt(rfp_text: str, kb_chunks: List[str], project=None, model
         "- `Resources` must contain only roles which are required for that particular activity, distinct from `Owner`.\n"
         "- If `Resources` is missing, fallback to the same `Owner` role.\n"
         "- Use less resources as much as possible.\n"
-        "- Effort Months should be small integers 0.5 to 1.5 months not more than this.\n"
+        "- Effort Months should be small numbers 0.5 to 1.5 months (inclusive).\n"
         "- IDs must start from 1 and increment sequentially.\n"
         "- If the RFP or Knowledge Base text lacks detail, infer the missing pieces logically."
         "- Include all relevant roles and activities that ensure delivery of the project scope."
@@ -563,12 +536,9 @@ def _extract_questions_from_text(raw_text: str) -> list[dict]:
     return [{"category": c, "items": lst} for c, lst in grouped.items()]
 async def generate_project_questions(db: AsyncSession, project) -> dict:
     """
-    Generate a categorized questionnaire for the given project using Azure OpenAI.
+    Generate a categorized questionnaire for the given project using Ollama.
     Saves the questions.json file in Azure Blob.
     """
-    if client is None or deployment is None:
-        logger.warning("Azure OpenAI not configured — skipping question generation")
-        return {"questions": []}
 
     # ---------- Extract RFP ----------
     rfp_text = ""
@@ -587,20 +557,9 @@ async def generate_project_questions(db: AsyncSession, project) -> dict:
     # ---------- Build prompt ----------
     prompt = _build_questionnaire_prompt(rfp_text, kb_chunks, project)
 
-    # ---------- Query Azure OpenAI ----------
+    # ---------- Query Ollama ----------
     try:
-        resp = await anyio.to_thread.run_sync(
-            lambda: client.chat.completions.create(
-                model=deployment,
-                messages=[
-                    {"role": "system", "content": "You are an expert business analyst."},
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=0.8,
-            )
-        )
-
-        raw_text = resp.choices[0].message.content.strip()
+        raw_text = await anyio.to_thread.run_sync(lambda: ollama_chat(prompt, temperature=0.8))
         questions = _extract_questions_from_text(raw_text)
         total_q = sum(len(cat["items"]) for cat in questions)
         logger.info(f" Generated {total_q} questions under {len(questions)} categories for project {project.id}")
@@ -774,7 +733,7 @@ async def _generate_fallback_architecture(
 ) -> tuple[models.ProjectFile | None, str]:
     """
     Generate and upload a default fallback architecture diagram (4-layer generic layout).
-    Triggered when Azure OpenAI or Graphviz generation fails.
+    Triggered when Ollama or Graphviz generation fails.
     """
     logger.warning(" Using fallback default architecture layout")
 
@@ -888,54 +847,26 @@ async def generate_architecture(
 ) -> tuple[models.ProjectFile | None, str]:
     """
     Generate a visually clean, context-aware architecture diagram (PNG & SVG)
-    from RFP + KB context using Azure OpenAI + Graphviz.
+    from RFP + KB context using Ollama + Graphviz.
     Uses dynamic prompts that adapt layers automatically (no static template).
     Includes retry logic, sanitization, validation, and fallback diagram.
     """
-    if client is None or deployment is None:
-        logger.warning(" Azure OpenAI not configured — skipping architecture generation")
-        return None, ""
 
     prompt = _build_architecture_prompt(rfp_text, kb_chunks, project)
 
-    # ---------- Step 1: Ask Azure OpenAI for Graphviz DOT code ----------
+    # ---------- Step 1: Ask Ollama for Graphviz DOT code ----------
     async def _generate_dot_from_ai(retry: int = 0) -> str:
-        """Call Azure OpenAI with retry logic."""
+        """Call Ollama locally to generate DOT diagram."""
         try:
-            resp = await anyio.to_thread.run_sync(
-                lambda: client.chat.completions.create(
-                    model=deployment,
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": (
-                                "You are an expert cloud solution architect. "
-                                "You must output ONLY valid Graphviz DOT syntax — no markdown or commentary."
-                            ),
-                        },
-                        {"role": "user", "content": prompt},
-                    ],
-                    temperature=0.7,
-                )
-            )
-
-            ai_output = resp.choices[0].message.content.strip()
-
-            # Log reasoning part (everything before 'digraph')
-            if "digraph" in ai_output:
-                reasoning = ai_output.split("digraph", 1)[0].strip()
-                if reasoning:
-                    logger.info(f" Architecture reasoning summary:\n{reasoning[:800]}")
-                ai_output = "digraph" + ai_output.split("digraph", 1)[1]
-
-            return ai_output
+            return await anyio.to_thread.run_sync(lambda: ollama_chat(prompt, temperature=0.7))
         except Exception as e:
             if retry < 2:
-                logger.warning(f" AI call failed (retry {retry+1}/3): {e}")
+                logger.warning(f"Ollama call failed (retry {retry+1}/3): {e}")
                 await anyio.sleep(2)
                 return await _generate_dot_from_ai(retry + 1)
-            logger.error(f" Azure OpenAI architecture generation failed after retries: {e}")
+            logger.error(f"Ollama architecture generation failed after retries: {e}")
             return ""
+
 
     dot_code = await _generate_dot_from_ai()
     if not dot_code:
@@ -1147,7 +1078,9 @@ async def clean_scope(db: AsyncSession, data: Dict[str, Any], project=None) -> D
             # overlap between activity and this relative month window
             overlap_start = max(s, rel_start)
             overlap_end = min(e, rel_end)
-            overlap_days = max(0, (overlap_end - overlap_start).days)
+            overlap_days = 0
+            if overlap_end >= overlap_start:
+                overlap_days = (overlap_end - overlap_start).days + 1
 
             if overlap_days > 0:
                 for r in involved_roles:
@@ -1235,14 +1168,9 @@ async def generate_project_scope(db: AsyncSession, project) -> dict:
         project.company_id = sigmoid.id
         await db.commit()
         await db.refresh(project)
-        logger.info(f"🔗 Linked project {project.id} to Sigmoid company as fallback")
+        logger.info(f"Linked project {project.id} to Sigmoid company as fallback")
 
-    if client is None or deployment is None:
-        logger.warning("Azure OpenAI not configured")
-        return {}
-
-    model_name = deployment
-    tokenizer = tiktoken.encoding_for_model(model_name)
+    tokenizer = tiktoken.get_encoding("cl100k_base")
     context_limit = 128000
     max_total_tokens = context_limit - 4000
     used_tokens = 0
@@ -1349,18 +1277,11 @@ async def generate_project_scope(db: AsyncSession, project) -> dict:
 
 
     # ---------- Build + query ----------
-    prompt = _build_scope_prompt(rfp_text, kb_chunks, project, model_name=model_name, questions_context=questions_context)
-
+    prompt = _build_scope_prompt(rfp_text, kb_chunks, project, questions_context=questions_context)
     try:
-        # Step 1: Generate scope via Azure OpenAI
-        resp = await anyio.to_thread.run_sync(
-            lambda: client.chat.completions.create(
-                model=deployment,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.7,
-            )
-        )
-        raw = _extract_json(resp.choices[0].message.content.strip())
+        # Step 1: Generate scope via Ollama
+        raw_text = await anyio.to_thread.run_sync(lambda: ollama_chat(prompt))
+        raw = _extract_json(raw_text)
         cleaned_scope = await clean_scope(db, raw, project=project)
         # Update project fields from generated overview (just like finalize_scope)
         overview = cleaned_scope.get("overview", {})
@@ -1430,7 +1351,7 @@ async def generate_project_scope(db: AsyncSession, project) -> dict:
         return cleaned_scope
 
     except Exception as e:
-        logger.error(f"Azure OpenAI scope generation failed: {e}")
+        logger.error(f"Ollama scope generation failed: {e}")
         return {}
 
 
@@ -1450,10 +1371,6 @@ async def regenerate_from_instructions(
         cleaned = await clean_scope(db, draft, project=project)
         return {**cleaned, "_finalized": True}
 
-    if client is None or deployment is None:
-        logger.warning("Azure OpenAI not configured; skipping creative regeneration")
-        cleaned = await clean_scope(db, draft, project=project)
-        return {**cleaned, "_finalized": True}
 
     prompt = f"""
 You are an **expert AI project planner and delivery architect** responsible for maintaining a project scope in JSON format.
@@ -1476,7 +1393,8 @@ Your task:
 
 ####  Schema
 - Preserve the same top-level keys: `overview`, `activities`, `resourcing_plan`.
-- Every activity must have: `id`, `name`, `effort_days`, `start_date`, `end_date`, and optional `depends_on`.
+- Every activity must have: "ID", "Activities", "Description", "Owner", "Resources", 
+- "Start Date", "End Date", "Effort Months"
 - Use valid ISO dates (`yyyy-mm-dd`).
 - Keep total duration ≤ 12 months.
 
@@ -1550,20 +1468,9 @@ Return only the updated JSON.
 """
 
 
-    # ---- Query Azure OpenAI creatively ----
+    # ---- Query Ollama creatively ----
     try:
-        resp = await anyio.to_thread.run_sync(
-            lambda: client.chat.completions.create(
-                model=deployment,
-                messages=[
-                    {"role": "system", "content": "You are a creative yet precise project scoping expert."},
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=0.5,
-            )
-        )
-
-        raw_text = resp.choices[0].message.content.strip()
+        raw_text = await anyio.to_thread.run_sync(lambda: ollama_chat(prompt, temperature=0.5))
         updated_scope = _extract_json(raw_text)
         cleaned = await clean_scope(db, updated_scope, project=project)
 
