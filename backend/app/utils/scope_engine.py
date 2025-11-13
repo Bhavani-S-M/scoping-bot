@@ -1472,8 +1472,26 @@ Return only the updated JSON.
     # ---- Query Ollama creatively ----
     try:
         raw_text = await anyio.to_thread.run_sync(lambda: ollama_chat(prompt, temperature=0.5))
+        logger.info(f"🤖 LLM response length: {len(raw_text)} chars")
+        logger.debug(f"LLM raw response (first 500 chars): {raw_text[:500]}")
         updated_scope = _extract_json(raw_text)
+
+        logger.info(f"📊 Extracted scope structure: overview={bool(updated_scope.get('overview'))}, "
+                   f"activities={len(updated_scope.get('activities', []))}, "
+                   f"resourcing_plan={len(updated_scope.get('resourcing_plan', []))}")
+
+        # Safety check: if LLM returned empty activities, preserve original
+        if not updated_scope.get("activities") or len(updated_scope.get("activities", [])) == 0:
+            logger.warning(f"⚠️ LLM returned empty activities - preserving original draft activities")
+            logger.info(f"📋 Original draft had {len(draft.get('activities', []))} activities")
+            # Preserve original activities and resourcing_plan, but update overview if changed
+            updated_scope["activities"] = draft.get("activities", [])
+            if "resourcing_plan" not in updated_scope or not updated_scope.get("resourcing_plan"):
+                updated_scope["resourcing_plan"] = draft.get("resourcing_plan", [])
+
         cleaned = await clean_scope(db, updated_scope, project=project)
+        logger.info(f"✅ Cleaned scope: {len(cleaned.get('activities', []))} activities, "
+                   f"{len(cleaned.get('resourcing_plan', []))} resources")
 
     except Exception as e:
         logger.error(f" Creative regeneration failed: {e}")
