@@ -1416,10 +1416,39 @@ Your task:
 
 ####  Schema
 - Preserve the same top-level keys: `overview`, `activities`, `resourcing_plan`.
-- Every activity must have: "ID", "Activities", "Description", "Owner", "Resources", 
+- Every activity must have: "ID", "Activities", "Description", "Owner", "Resources",
 - "Start Date", "End Date", "Effort Months"
 - Use valid ISO dates (`yyyy-mm-dd`).
 - Keep total duration ≤ 12 months.
+
+**CRITICAL: What activities look like**
+CORRECT activity example:
+```json
+{
+  "ID": 1,
+  "Activities": "Project Initiation and Requirements Gathering",
+  "Description": "Define project scope, gather requirements, create initial documentation",
+  "Owner": "Project Manager",
+  "Resources": "Business Analyst, Data Architect",
+  "Start Date": "2025-01-15",
+  "End Date": "2025-02-28",
+  "Effort Months": 1.5
+}
+```
+
+WRONG activity example (DO NOT DO THIS):
+```json
+{
+  "ID": 1,
+  "Activities": "Project Manager",  ← WRONG! This is a role name, not an activity!
+  "Description": "",  ← WRONG! Must have meaningful description!
+  "Owner": "Unassigned",  ← WRONG! Must have a real owner!
+  "Resources": "",
+  "Start Date": "2025-01-15",
+  "End Date": "2025-02-15",
+  "Effort Months": 1
+}
+```
 
 ####  Temporal Adjustment Rules
 Use these to keep the schedule consistent and continuous.
@@ -1557,9 +1586,51 @@ Return only the updated JSON.
         new_activity_count = len(updated_scope.get('activities', []))
         is_removal_instruction = any(word in instructions.lower() for word in ['remove', 'delete'])
 
-        # If LLM significantly reduced activities without removal instruction, restore original
-        if new_activity_count < (original_activity_count * 0.7) and not is_removal_instruction:
-            logger.error(f"❌ LLM LOST TOO MANY ACTIVITIES! Original: {original_activity_count}, New: {new_activity_count}")
+        # Advanced validation: Check if activities are valid/meaningful
+        activities_are_valid = True
+        validation_failures = []
+
+        if updated_scope.get('activities'):
+            unassigned_count = sum(1 for act in updated_scope['activities'] if act.get('Owner', '').lower() in ['unassigned', ''])
+            empty_desc_count = sum(1 for act in updated_scope['activities'] if not act.get('Description', '').strip())
+
+            # Check if activity names are just role names (common LLM mistake)
+            common_roles = ['project manager', 'business analyst', 'data architect', 'data engineer',
+                           'backend developer', 'frontend developer', 'qa engineer', 'devops engineer',
+                           'cloud architect', 'data analyst', 'ux designer']
+            role_name_activities = sum(1 for act in updated_scope['activities']
+                                      if act.get('Activities', '').lower().strip() in common_roles)
+
+            # Check if all activities have identical dates (suspicious)
+            dates = [(act.get('Start Date'), act.get('End Date')) for act in updated_scope['activities']]
+            unique_date_pairs = len(set(dates))
+
+            # Validation thresholds
+            if unassigned_count > new_activity_count * 0.5:  # More than 50% unassigned
+                activities_are_valid = False
+                validation_failures.append(f"{unassigned_count}/{new_activity_count} activities have Unassigned owner")
+
+            if empty_desc_count > new_activity_count * 0.5:  # More than 50% empty descriptions
+                activities_are_valid = False
+                validation_failures.append(f"{empty_desc_count}/{new_activity_count} activities have empty descriptions")
+
+            if role_name_activities > new_activity_count * 0.3:  # More than 30% are just role names
+                activities_are_valid = False
+                validation_failures.append(f"{role_name_activities}/{new_activity_count} activities are named after roles (e.g. 'Project Manager', 'Data Engineer')")
+
+            if unique_date_pairs == 1 and new_activity_count > 1:  # All activities have same dates
+                activities_are_valid = False
+                validation_failures.append(f"All {new_activity_count} activities have identical dates: {dates[0]}")
+
+        # If LLM significantly reduced activities OR created invalid activities, restore original
+        if (new_activity_count < (original_activity_count * 0.7) and not is_removal_instruction) or not activities_are_valid:
+            if not activities_are_valid:
+                logger.error(f"❌ LLM GENERATED INVALID ACTIVITIES!")
+                for failure in validation_failures:
+                    logger.error(f"   - {failure}")
+            else:
+                logger.error(f"❌ LLM LOST TOO MANY ACTIVITIES! Original: {original_activity_count}, New: {new_activity_count}")
+
             logger.error(f"   User instruction: '{instructions[:100]}'")
             logger.error(f"   🔧 Auto-restoring original activities to prevent data loss")
 
@@ -1568,7 +1639,7 @@ Return only the updated JSON.
             if "resourcing_plan" not in updated_scope or not updated_scope.get("resourcing_plan"):
                 updated_scope["resourcing_plan"] = draft.get("resourcing_plan", [])
 
-            logger.info(f"   ✅ Restored {len(updated_scope['activities'])} activities from draft")
+            logger.info(f"   ✅ Restored {len(updated_scope['activities'])} valid activities from draft")
 
         # Log roles found in activities
         if updated_scope.get('activities'):
