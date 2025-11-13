@@ -80,10 +80,22 @@ def generate_xlsx(scope: Dict[str, Any]) -> io.BytesIO:
         # --------- Overview ----------
         ws_ov = wb.add_worksheet("Overview")
         ws_ov.write_row("A1", ["Field", "Value"], fmt_th)
-        for i, (k, v) in enumerate(data.get("overview", {}).items(), start=2):
+
+        # Include discount information if present
+        overview_data = data.get("overview", {})
+        discount_pct = data.get("discount_percentage", 0)
+
+        for i, (k, v) in enumerate(overview_data.items(), start=2):
             zfmt = fmt_z1 if i % 2 else fmt_z2
             ws_ov.write(f"A{i}", k, zfmt)
             ws_ov.write(f"B{i}", str(v), zfmt)
+
+        # Add discount row if discount was applied
+        if discount_pct and isinstance(discount_pct, (int, float)) and discount_pct > 0:
+            next_row = len(overview_data.items()) + 2
+            zfmt = fmt_z1 if next_row % 2 else fmt_z2
+            ws_ov.write(f"A{next_row}", "Discount Applied", zfmt)
+            ws_ov.write(f"B{next_row}", f"{discount_pct}% discount applied to all costs", zfmt)
 
         ws_ov.set_column("A:A", 20)
         ws_ov.set_column("B:B", 100)
