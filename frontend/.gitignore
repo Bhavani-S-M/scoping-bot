@@ -22,3 +22,5 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+MIGRATIONS_NOTES.md
+./MIGRATIONS_NOTES.md
