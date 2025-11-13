@@ -137,6 +137,18 @@ This update fixes nine critical issues and adds one new feature in the scoping-b
 **Files Changed:**
 - `backend/app/utils/scope_engine.py:1433-1571`
 
+**UPDATE (CRITICAL):**
+Additional validation added after discovering LLM was generating completely invalid activities (activities named after roles, empty descriptions, all "Unassigned" owners). New validation checks:
+- Detects if >50% of activities have "Unassigned" as owner
+- Detects if >50% of activities have empty descriptions
+- Detects if >30% of activities are named after common roles (e.g., "Project Manager", "Data Engineer")
+- Detects if all activities have identical dates
+- Auto-restores original activities if ANY validation fails
+- Added clear CORRECT vs WRONG activity examples in prompt
+
+**Files Changed (Update):**
+- `backend/app/utils/scope_engine.py:1560-1613, 1424-1451`
+
 ### 9. Missing Discount Feature (NEW FEATURE)
 
 **Problem:**
