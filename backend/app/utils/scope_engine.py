@@ -1537,8 +1537,10 @@ Return only the updated JSON.
         if instructions and 'remove' in instructions.lower() and updated_scope.get('activities'):
             # Extract role to remove from instructions (basic pattern matching)
             import re
-            remove_pattern = r'remove\s+(.+?)(?:\s+|$)'
-            match = re.search(remove_pattern, instructions.lower())
+            # Pattern to match "remove <role>" where role can be multi-word
+            # Matches everything after "remove" until end of string or common delimiters
+            remove_pattern = r'remove\s+([a-zA-Z\s]+?)(?:\s*(?:from|,|\.|\band\b|$))'
+            match = re.search(remove_pattern, instructions.lower(), re.IGNORECASE)
             if match:
                 role_to_remove = match.group(1).strip()
                 logger.info(f"🔧 Post-processing: attempting to remove '{role_to_remove}'")
