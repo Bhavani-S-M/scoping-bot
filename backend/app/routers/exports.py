@@ -12,6 +12,7 @@ from app.config.database import get_async_session
 from app.auth.router import fastapi_users
 from app.utils import export, scope_engine
 
+logger = logging.getLogger(__name__)
 current_active_user = fastapi_users.current_user(active=True)
 
 router = APIRouter(prefix="/api/projects/{project_id}/export", tags=["Export"])
