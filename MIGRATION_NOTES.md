@@ -1,8 +1,8 @@
-# Migration Notes - Embedding Dimension Fix
+# Migration Notes - Bug Fixes and Enhancements
 
 ## Issues Fixed
 
-This update fixes three critical issues in the scoping-bot application:
+This update fixes six critical issues in the scoping-bot application:
 
 ### 1. Embedding Dimension Mismatch (CRITICAL)
 
@@ -42,6 +42,57 @@ This update fixes three critical issues in the scoping-bot application:
 
 **Files Changed:**
 - `backend/app/utils/scope_engine.py:322`
+
+### 4. Import Shadowing Error
+
+**Problem:**
+- Function `_build_scope_prompt()` was importing `datetime` module
+- This shadowed the `datetime` class imported at file level
+- Caused `AttributeError: module 'datetime' has no attribute 'today'`
+
+**Fix:**
+- Removed redundant `datetime` import from line 274
+
+**Files Changed:**
+- `backend/app/utils/scope_engine.py:274`
+
+### 5. Empty Scope Regeneration
+
+**Problem:**
+- After user modifications, scope preview showed empty `activities` and `resourcing_plan`
+- LLM (deepseek-r1) was inconsistently generating complete responses
+- Only returned `overview` section without activities
+
+**Fix:**
+- Added safety check to preserve original activities if LLM returns empty array
+- Enhanced logging to track LLM response structure
+- Prevents data loss during regeneration
+
+**Files Changed:**
+- `backend/app/utils/scope_engine.py:1478-1530`
+
+### 6. Role Management Not Working
+
+**Problem:**
+- Instructions like "remove Business Analyst" or "add Backend Developer" were not reflected
+- LLM was not properly following role addition/removal instructions
+- Roles remained in activities and resourcing_plan after removal requests
+
+**Fix:**
+- Added comprehensive "Role Management Rules" section to regeneration prompt
+- Implemented post-processing fallback that automatically removes roles if LLM fails
+- Enhanced validation and logging for role operations
+- Lowered temperature from 0.5 to 0.2 for more consistent instruction-following
+- Improved regex pattern to handle multi-word role names
+
+**Features:**
+- Automatic role removal with intelligent activity reassignment
+- Detailed logging of role changes
+- Validation that removal/addition instructions were followed
+- Works even if LLM completely ignores instructions
+
+**Files Changed:**
+- `backend/app/utils/scope_engine.py:1433-1580`
 
 ## Required Actions
 
@@ -99,6 +150,10 @@ After applying these changes and recreating the collection:
 3. Generate a project scope
 4. Verify no dimension mismatch warnings appear
 5. Verify no datetime comparison errors occur
+6. Test scope regeneration with modifications:
+   - Try "remove [role name]" - verify role is removed from activities and resourcing_plan
+   - Try "add [role name]" - verify role appears in appropriate activities
+   - Check application logs for detailed role tracking information
 
 ## Rollback (if needed)
 
