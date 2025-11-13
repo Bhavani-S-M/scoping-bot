@@ -271,7 +271,7 @@ def _rag_retrieve(query: str, k: int = 5) -> List[Dict]:
         return []
 
 def _build_scope_prompt(rfp_text: str, kb_chunks: List[str], project=None, questions_context: str | None = None) -> str:
-    import datetime, tiktoken
+    import tiktoken
 
     # Tokenizer
     tokenizer = tiktoken.get_encoding("cl100k_base")
