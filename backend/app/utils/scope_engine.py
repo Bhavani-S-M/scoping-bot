@@ -1552,13 +1552,23 @@ Return only the updated JSON.
                    f"activities={len(updated_scope.get('activities', []))}, "
                    f"resourcing_plan={len(updated_scope.get('resourcing_plan', []))}")
 
-        # Validate activity count
+        # Validate activity count - prevent accidental scope replacement
         original_activity_count = len(draft.get('activities', []))
         new_activity_count = len(updated_scope.get('activities', []))
-        if new_activity_count < original_activity_count and 'remove' not in instructions.lower() and 'delete' not in instructions.lower():
-            logger.error(f"❌ LLM LOST ACTIVITIES! Original: {original_activity_count}, New: {new_activity_count}")
-            logger.error(f"   User instruction was: '{instructions[:100]}'")
-            logger.error(f"   This suggests LLM replaced scope instead of modifying it")
+        is_removal_instruction = any(word in instructions.lower() for word in ['remove', 'delete'])
+
+        # If LLM significantly reduced activities without removal instruction, restore original
+        if new_activity_count < (original_activity_count * 0.7) and not is_removal_instruction:
+            logger.error(f"❌ LLM LOST TOO MANY ACTIVITIES! Original: {original_activity_count}, New: {new_activity_count}")
+            logger.error(f"   User instruction: '{instructions[:100]}'")
+            logger.error(f"   🔧 Auto-restoring original activities to prevent data loss")
+
+            # Restore original activities
+            updated_scope["activities"] = draft.get("activities", [])
+            if "resourcing_plan" not in updated_scope or not updated_scope.get("resourcing_plan"):
+                updated_scope["resourcing_plan"] = draft.get("resourcing_plan", [])
+
+            logger.info(f"   ✅ Restored {len(updated_scope['activities'])} activities from draft")
 
         # Log roles found in activities
         if updated_scope.get('activities'):
