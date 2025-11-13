@@ -2,7 +2,7 @@
 
 ## Issues Fixed
 
-This update fixes seven critical issues in the scoping-bot application:
+This update fixes nine critical issues and adds one new feature in the scoping-bot application:
 
 ### 1. Embedding Dimension Mismatch (CRITICAL)
 
@@ -112,6 +112,65 @@ This update fixes seven critical issues in the scoping-bot application:
 **Files Changed:**
 - `backend/app/utils/export.py:332-353`
 
+### 8. "Add 1 More" Replacing Entire Scope
+
+**Problem:**
+- User instruction "add 1 more Backend Developer" was removing ALL activities
+- LLM was replacing entire scope instead of incrementally adding
+- All existing activities and roles were lost
+- "Add" was interpreted as "replace" instead of "increase"
+
+**Fix:**
+- Enhanced prompt with **CRITICAL** markers for incremental changes
+- Explicit instructions: "Keep ALL existing activities and roles"
+- Detailed examples of what "add 1 more" means (increase allocation, not replace)
+- Added activity count validation to detect unexpected losses
+- Automatic fallback: if >30% of activities lost without remove/delete, restore original
+- Clear distinction: ADD = increase, REMOVE = decrease
+
+**Features:**
+- Real-time validation of activity count changes
+- Auto-restore if LLM accidentally deletes activities
+- Comprehensive logging to track what LLM is doing
+- Prevents data loss from ambiguous instructions
+
+**Files Changed:**
+- `backend/app/utils/scope_engine.py:1433-1571`
+
+### 9. Missing Discount Feature (NEW FEATURE)
+
+**Problem:**
+- Users requested percentage discounts (5%, 10%, etc.)
+- No way to apply discounts and recalculate costs
+
+**Fix:**
+- Added discount parsing from user instructions
+- Supports multiple formats: "5% discount", "apply 10%", "give 15% discount"
+- Discount applied to all costs in resourcing_plan
+- Shows discount percentage in overview
+- Shows total cost after discount
+- Preserves activities and efforts - only adjusts final costs
+
+**Features:**
+- Pattern matching for discount requests
+- Automatic cost recalculation with discount multiplier
+- Discount shown in overview: "Discount: 10%"
+- Detailed logging of cost adjustments per role
+- Maintains discount_percentage in scope for reference
+
+**Example Usage:**
+```
+User: "apply 10% discount"
+Result:
+- All role costs reduced by 10%
+- Overview shows: "Discount: 10%"
+- Overview shows: "Total Cost (After Discount): $95,400"
+- Activities and efforts unchanged
+```
+
+**Files Changed:**
+- `backend/app/utils/scope_engine.py:1133-1144, 1166-1177, 1626-1651`
+
 ## Required Actions
 
 ### ⚠️ IMPORTANT: Recreate Qdrant Collection
@@ -170,8 +229,9 @@ After applying these changes and recreating the collection:
 5. Verify no datetime comparison errors occur
 6. Test scope regeneration with modifications:
    - Try "remove [role name]" - verify role is removed from activities and resourcing_plan
-   - Try "add [role name]" - verify role appears in appropriate activities
-   - Check application logs for detailed role tracking information
+   - Try "add 1 more [role name]" - verify role is added to more activities, existing ones preserved
+   - Try "apply 10% discount" - verify costs reduced by 10%, discount shown in overview
+   - Check application logs for detailed role tracking and discount information
 
 ## Rollback (if needed)
 
