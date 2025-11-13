@@ -329,19 +329,28 @@ async def generate_pdf(scope: Dict[str, Any]) -> io.BytesIO:
             # Section header
             elems.append(Paragraph("<b>System Architecture</b>", styles["Heading2"]))
 
-            # ---- Improved image rendering ----
+            # ---- Improved image rendering with height constraint ----
             img = RLImage(img_buf)
 
-            # Dynamically scale image width
-            max_width = 780  # fits within your current A4 landscape scaling
-            aspect = img.imageHeight / float(img.imageWidth)
-            new_height = max_width * aspect
+            # Define maximum dimensions that fit within page
+            max_width = 780  # fits within current A4 landscape scaling
+            max_height = 1000  # leave room for margins and other content
 
-            img.drawWidth = max_width
+            # Calculate scaling to fit within both width and height constraints
+            width_scale = max_width / float(img.imageWidth)
+            height_scale = max_height / float(img.imageHeight)
+
+            # Use the smaller scale factor to ensure image fits both dimensions
+            scale = min(width_scale, height_scale)
+
+            new_width = img.imageWidth * scale
+            new_height = img.imageHeight * scale
+
+            img.drawWidth = new_width
             img.drawHeight = new_height
 
             # Left align cleanly using Table (ReportLab trick)
-            img_table = Table([[img]], colWidths=[max_width], hAlign="LEFT")
+            img_table = Table([[img]], colWidths=[new_width], hAlign="LEFT")
             img_table.setStyle(TableStyle([
                 ("ALIGN", (0, 0), (-1, -1), "LEFT"),
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
