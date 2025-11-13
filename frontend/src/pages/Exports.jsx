@@ -776,11 +776,12 @@ export default function Exports() {
                 onChange={(e) => setExcelSection(e.target.value)}
                 className="border rounded-md px-3 py-2 text-sm"
               >
+                {/* Only show valid scope sections with user-friendly labels */}
                 {Object.keys(parsedDraft)
-                  .filter((k) => Array.isArray(parsedDraft[k]) || k === "overview")
+                  .filter((k) => k === "overview" || k === "activities" || k === "resourcing_plan")
                   .map((k) => (
                     <option key={k} value={k}>
-                      {k}
+                      {k === "resourcing_plan" ? "Resources Plan" : k === "activities" ? "Activities" : "Overview"}
                     </option>
                   ))}
               </select>
