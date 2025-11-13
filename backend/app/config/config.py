@@ -46,7 +46,8 @@ SMTP_PASS = os.getenv("SMTP_PASS","your-smtp-pass")
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "deepseek-r1")
 OLLAMA_EMBED_MODEL = os.getenv("OLLAMA_EMBED_MODEL", "qwen3-embedding")
-VECTOR_DIM = int(os.getenv("VECTOR_DIM", "1536"))
+# qwen3-embedding produces 4096-dimensional vectors
+VECTOR_DIM = int(os.getenv("VECTOR_DIM", "4096"))
 
 # ---------- VECTOR DATABASE / QDRANT ----------
 QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")

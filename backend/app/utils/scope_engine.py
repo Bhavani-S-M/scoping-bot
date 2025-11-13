@@ -319,7 +319,7 @@ def _build_scope_prompt(rfp_text: str, kb_chunks: List[str], project=None, quest
         f"Duration (months): {duration or '(infer if missing)'}\n\n"
     )
 
-    today_str = datetime.date.today().isoformat()
+    today_str = datetime.today().date().isoformat()
 
     return (
         "You are an expert AI project planner.\n"
@@ -975,7 +975,8 @@ async def clean_scope(db: AsyncSession, data: Dict[str, Any], project=None) -> D
         return {}
 
     ist = pytz.timezone("Asia/Kolkata")
-    today = datetime.now(ist).replace(hour=0, minute=0, second=0, microsecond=0)
+    # Use timezone-naive datetime to avoid comparison issues with parsed dates
+    today = datetime.now(ist).replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
 
     activities: List[Dict[str, Any]] = []
     start_dates, end_dates = [], []
