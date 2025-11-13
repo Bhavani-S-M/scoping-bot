@@ -406,15 +406,15 @@ async def generate_pdf(scope: Dict[str, Any]) -> io.BytesIO:
         try:
             logger.info(f"📊 Attempting to download architecture diagram from: {arch_path}")
 
-            # Add timeout protection for blob download (5 seconds max)
+            # Add timeout protection for blob download (15 seconds max)
             import asyncio
             try:
                 img_bytes = await asyncio.wait_for(
                     azure_blob.download_bytes(arch_path),
-                    timeout=5.0
+                    timeout=15.0
                 )
             except asyncio.TimeoutError:
-                logger.warning(f"⏱️ Architecture diagram download timed out after 5s - skipping")
+                logger.warning(f"⏱️ Architecture diagram download timed out after 15s - skipping")
                 raise Exception("Blob download timeout")
 
             if not img_bytes or len(img_bytes) == 0:
