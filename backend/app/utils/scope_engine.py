@@ -1130,6 +1130,18 @@ async def clean_scope(db: AsyncSession, data: Dict[str, Any], project=None) -> D
         }
         resourcing_plan.append(plan_entry)
 
+    # --- Apply discount if present ---
+    discount_percentage = data.get("discount_percentage", 0)
+    if discount_percentage and isinstance(discount_percentage, (int, float)) and discount_percentage > 0:
+        discount_multiplier = 1 - (discount_percentage / 100.0)
+        logger.info(f"💰 Applying {discount_percentage}% discount (multiplier: {discount_multiplier})")
+
+        # Apply discount to all costs in resourcing_plan
+        for plan_entry in resourcing_plan:
+            original_cost = plan_entry.get("Cost", 0)
+            discounted_cost = round(original_cost * discount_multiplier, 2)
+            plan_entry["Cost"] = discounted_cost
+            logger.info(f"  → {plan_entry['Resources']}: ${original_cost} → ${discounted_cost}")
 
     # --- Overview ---
     ov = data.get("overview") or {}
@@ -1151,9 +1163,19 @@ async def clean_scope(db: AsyncSession, data: Dict[str, Any], project=None) -> D
     except Exception:
         data["overview"]["Currency"] = "USD"
 
+    # Add discount to overview if present
+    if discount_percentage and isinstance(discount_percentage, (int, float)) and discount_percentage > 0:
+        data["overview"]["Discount"] = f"{discount_percentage}%"
+        total_cost = sum(plan_entry.get("Cost", 0) for plan_entry in resourcing_plan)
+        data["overview"]["Total Cost (After Discount)"] = f"${total_cost:,.2f}"
 
     data["activities"] = activities
     data["resourcing_plan"] = resourcing_plan
+
+    # Keep discount_percentage in output for reference
+    if discount_percentage and isinstance(discount_percentage, (int, float)) and discount_percentage > 0:
+        data["discount_percentage"] = discount_percentage
+
     return data
 
 
@@ -1433,29 +1455,46 @@ Use these to keep the schedule consistent and continuous.
 ####  Role Management Rules
 Critical: When user requests to add or remove roles, you MUST update BOTH activities and resourcing_plan.
 
+**IMPORTANT: All changes are INCREMENTAL - preserve existing activities unless explicitly deleted!**
+
 **Remove a role (e.g., "remove Business Analyst")**:
-1. Find all activities where the role is the Owner
-2. Reassign those activities to another appropriate role
-3. Remove the role from ALL Resources fields across all activities
-4. REMOVE the role completely from resourcing_plan
-5. Example: If removing "Business Analyst":
+1. Keep ALL existing activities
+2. Find all activities where the role is the Owner
+3. Reassign those activities to another appropriate role
+4. Remove the role from ALL Resources fields across all activities
+5. DO NOT delete any activities - only change role assignments
+6. Example: If removing "Business Analyst":
    - Activity: "Owner": "Business Analyst" → change to "Owner": "Product Manager"
    - Activity: "Resources": "Business Analyst, Data Engineer" → change to "Resources": "Data Engineer"
-   - resourcing_plan: DELETE the entire entry for "Business Analyst"
+   - Keep ALL other activities unchanged
+   - resourcing_plan: will be auto-calculated
 
 **Add more of an existing role (e.g., "add 1 more Backend Developer")**:
-1. Keep activities unchanged (or add new activities if appropriate)
-2. The resourcing_plan will be auto-calculated based on activities
-3. If you want to increase Backend Developer allocation, add them to more activities or extend their participation
-4. Example: "add 1 Backend Developer" means:
-   - Add "Backend Developer" to Resources field of activities that need backend work
-   - Or create new activities owned by "Backend Developer"
-   - The clean_scope function will automatically calculate effort based on activity dates
+1. **CRITICAL**: Keep ALL existing activities and roles
+2. "Add 1 more" means INCREASE allocation, not replace
+3. To increase Backend Developer allocation:
+   - Add "Backend Developer" to Resources field of MORE existing activities
+   - OR extend date ranges of activities that already have Backend Developer
+   - OR create 1-2 NEW activities specifically for Backend Developer
+4. **DO NOT remove any existing activities or roles**
+5. Example: If you have 10 activities and "add 1 Backend Developer":
+   - Original: 10 activities with Backend Developer in 3 of them
+   - After: Same 10 activities PLUS Backend Developer added to 2-3 more activities
+   - Result: Backend Developer effort increases from 3 months to 5-6 months
 
 **Add a new role type (e.g., "add Security Engineer")**:
-1. Identify activities that would benefit from this role
-2. Either create new activities for this role OR add to Resources field of existing activities
-3. The resourcing_plan will be auto-generated based on activities
+1. **CRITICAL**: Keep ALL existing activities and roles
+2. Add new activities for this role OR add to Resources field of existing activities
+3. DO NOT remove any existing activities
+4. The resourcing_plan will be auto-generated based on activities
+
+####  Discount Rules
+When user requests a discount (e.g., "apply 5% discount", "give 10% discount"):
+1. **DO NOT change activities, dates, or efforts**
+2. **ONLY note the discount percentage in a special field**
+3. Add a new field: "discount_percentage": <number> (e.g., 5 for 5%, 10 for 10%)
+4. The discount will be applied automatically during cost calculation
+5. Keep all activities, roles, and resourcing_plan calculations unchanged
 
 ### Scheduling Rules
 - Activities should follow **semi-parallel execution** — overlap realistically but maintain logical order.
@@ -1482,10 +1521,12 @@ Critical: When user requests to add or remove roles, you MUST update BOTH activi
   - `overview` → Project metadata (name, domain, complexity, tech stack, etc.)
   - `activities` → COMPLETE updated list with ALL modifications applied
   - `resourcing_plan` → OPTIONAL (will be auto-calculated from activities)
+  - `discount_percentage` → OPTIONAL (only if user requested discount, e.g., 5 for 5%, 10 for 10%)
 - **CRITICAL**: If user says "remove [role]", that role MUST NOT appear in ANY activity's Owner or Resources field
-- **CRITICAL**: If user says "add [role]", that role MUST appear in appropriate activities
+- **CRITICAL**: If user says "add 1 more [role]", ADD to existing activities, DO NOT replace them
+- **CRITICAL**: If user says "apply X% discount", include "discount_percentage": X in output
 - **Dont change schema or field names.**
-- Ensure ALL activities are included in output - don't omit any unless explicitly deleted
+- **PRESERVE all activities** - only modify/add/remove specific items mentioned by user
 
 ---
 
@@ -1510,6 +1551,14 @@ Return only the updated JSON.
         logger.info(f"📊 Extracted scope structure: overview={bool(updated_scope.get('overview'))}, "
                    f"activities={len(updated_scope.get('activities', []))}, "
                    f"resourcing_plan={len(updated_scope.get('resourcing_plan', []))}")
+
+        # Validate activity count
+        original_activity_count = len(draft.get('activities', []))
+        new_activity_count = len(updated_scope.get('activities', []))
+        if new_activity_count < original_activity_count and 'remove' not in instructions.lower() and 'delete' not in instructions.lower():
+            logger.error(f"❌ LLM LOST ACTIVITIES! Original: {original_activity_count}, New: {new_activity_count}")
+            logger.error(f"   User instruction was: '{instructions[:100]}'")
+            logger.error(f"   This suggests LLM replaced scope instead of modifying it")
 
         # Log roles found in activities
         if updated_scope.get('activities'):
@@ -1581,6 +1630,33 @@ Return only the updated JSON.
 
                 if changes_made:
                     logger.info(f"✅ Post-processing successfully removed role '{role_to_remove}' from activities")
+
+        # Post-processing: parse discount percentage from instructions
+        if instructions:
+            import re
+            # Pattern to match discount requests: "5% discount", "apply 10% discount", "give 15% discount", etc.
+            discount_patterns = [
+                r'(\d+)\s*%\s*discount',
+                r'discount\s+(?:of\s+)?(\d+)\s*%',
+                r'apply\s+(\d+)\s*%',
+                r'give\s+(\d+)\s*%',
+            ]
+            discount_found = False
+            for pattern in discount_patterns:
+                match = re.search(pattern, instructions.lower())
+                if match:
+                    discount_percentage = int(match.group(1))
+                    logger.info(f"💰 Post-processing: detected {discount_percentage}% discount request")
+
+                    # Add discount to updated_scope if not already present
+                    if "discount_percentage" not in updated_scope or not updated_scope.get("discount_percentage"):
+                        updated_scope["discount_percentage"] = discount_percentage
+                        logger.info(f"  → Added discount_percentage: {discount_percentage}")
+                    discount_found = True
+                    break
+
+            if not discount_found and any(word in instructions.lower() for word in ['discount', 'reduction', 'reduce cost']):
+                logger.warning(f"⚠️ User mentioned discount but couldn't parse percentage. Instructions: {instructions[:100]}")
 
         # Safety check: if LLM returned empty activities, preserve original
         if not updated_scope.get("activities") or len(updated_scope.get("activities", [])) == 0:
