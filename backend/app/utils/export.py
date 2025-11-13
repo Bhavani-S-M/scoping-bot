@@ -286,6 +286,70 @@ def generate_xlsx(scope: Dict[str, Any]) -> io.BytesIO:
             pie.set_title({"name": "Cost by Role"})
             ws_r.insert_chart("M1", pie, {"x_scale": 1.5, "y_scale": 1.5})
 
+        # -------- Project Summary --------
+        summary = data.get("project_summary", {})
+        if summary and isinstance(summary, dict):
+            ws_s = wb.add_worksheet("Project Summary")
+            ws_s.set_column("A:A", 25)
+            ws_s.set_column("B:B", 100)
+
+            # Add title
+            title_format = wb.add_format({
+                "bold": True, "font_size": 14, "bg_color": THEME["header_bg"],
+                "border": 1, "align": "left"
+            })
+            ws_s.merge_range("A1:B1", "Project Summary", title_format)
+
+            row = 2
+
+            # Executive Summary
+            exec_summary = summary.get("executive_summary", "")
+            if exec_summary:
+                ws_s.write(row, 0, "Executive Summary", fmt_th)
+                ws_s.write(row, 1, exec_summary, wb.add_format({
+                    "border": 1, "text_wrap": True, "valign": "top"
+                }))
+                row += 2
+
+            # Key Deliverables
+            deliverables = summary.get("key_deliverables", [])
+            if deliverables and isinstance(deliverables, list):
+                ws_s.write(row, 0, "Key Deliverables", fmt_th)
+                deliverables_text = "\n".join([f"• {item}" for item in deliverables])
+                ws_s.write(row, 1, deliverables_text, wb.add_format({
+                    "border": 1, "text_wrap": True, "valign": "top"
+                }))
+                row += 2
+
+            # Success Criteria
+            success = summary.get("success_criteria", [])
+            if success and isinstance(success, list):
+                ws_s.write(row, 0, "Success Criteria", fmt_th)
+                success_text = "\n".join([f"• {item}" for item in success])
+                ws_s.write(row, 1, success_text, wb.add_format({
+                    "border": 1, "text_wrap": True, "valign": "top"
+                }))
+                row += 2
+
+            # Risks and Mitigation
+            risks = summary.get("risks_and_mitigation", [])
+            if risks and isinstance(risks, list) and len(risks) > 0:
+                ws_s.write(row, 0, "Risks & Mitigation", fmt_th)
+                ws_s.write(row, 1, "", fmt_th)
+                row += 1
+
+                # Create table for risks
+                risk_headers = ["Risk", "Mitigation Strategy"]
+                ws_s.write_row(row, 0, risk_headers, fmt_th)
+                row += 1
+
+                for risk_item in risks:
+                    if isinstance(risk_item, dict):
+                        zfmt = fmt_z1 if row % 2 else fmt_z2
+                        ws_s.write(row, 0, risk_item.get("risk", ""), zfmt)
+                        ws_s.write(row, 1, risk_item.get("mitigation", ""), zfmt)
+                        row += 1
+
         wb.close()
         buf.seek(0)
         return buf
@@ -624,6 +688,68 @@ async def generate_pdf(scope: Dict[str, Any]) -> io.BytesIO:
             elems.append(Paragraph("<b>Cost Projection</b>", styles["Heading2"]))
             elems.append(Spacer(1, 0.6 * cm))
             elems.append(d2)
+
+    # -------- Project Summary --------
+    summary = data.get("project_summary", {})
+    if summary and isinstance(summary, dict):
+        elems.append(PageBreak())
+        elems.append(Paragraph("<b>Project Summary</b>", styles["Heading1"]))
+        elems.append(Spacer(1, 0.4 * cm))
+
+        # Executive Summary
+        exec_summary = summary.get("executive_summary", "")
+        if exec_summary:
+            elems.append(Paragraph("<b>Executive Summary</b>", styles["Heading2"]))
+            elems.append(Paragraph(exec_summary, wrap))
+            elems.append(Spacer(1, 0.4 * cm))
+
+        # Key Deliverables
+        deliverables = summary.get("key_deliverables", [])
+        if deliverables and isinstance(deliverables, list):
+            elems.append(Paragraph("<b>Key Deliverables</b>", styles["Heading2"]))
+            for item in deliverables:
+                elems.append(Paragraph(f"• {item}", wrap))
+            elems.append(Spacer(1, 0.4 * cm))
+
+        # Success Criteria
+        success = summary.get("success_criteria", [])
+        if success and isinstance(success, list):
+            elems.append(Paragraph("<b>Success Criteria</b>", styles["Heading2"]))
+            for item in success:
+                elems.append(Paragraph(f"• {item}", wrap))
+            elems.append(Spacer(1, 0.4 * cm))
+
+        # Risks and Mitigation
+        risks = summary.get("risks_and_mitigation", [])
+        if risks and isinstance(risks, list):
+            elems.append(Paragraph("<b>Risks and Mitigation Strategies</b>", styles["Heading2"]))
+            risk_rows = [["Risk", "Mitigation Strategy"]]
+            for risk_item in risks:
+                if isinstance(risk_item, dict):
+                    risk_rows.append([
+                        Paragraph(risk_item.get("risk", ""), wrap),
+                        Paragraph(risk_item.get("mitigation", ""), wrap)
+                    ])
+
+            if len(risk_rows) > 1:  # Only add table if there are risks
+                risk_table = Table(risk_rows, colWidths=[300, 400], repeatRows=1)
+                ts_risk = TableStyle([
+                    ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(THEME["header_bg"])),
+                    ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
+                    ("FONTSIZE", (0, 0), (-1, -1), 10),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ])
+
+                for i in range(1, len(risk_rows)):
+                    ts_risk.add("BACKGROUND", (0, i), (-1, i),
+                               colors.HexColor(THEME["zebra1" if i % 2 else "zebra2"]))
+
+                risk_table.setStyle(ts_risk)
+                risk_table.hAlign = "LEFT"
+                elems.append(risk_table)
+                elems.append(Spacer(1, 0.4 * cm))
 
     # Build PDF
     doc.build(elems)

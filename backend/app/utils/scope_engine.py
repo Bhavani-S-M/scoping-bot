@@ -350,7 +350,13 @@ def _build_scope_prompt(rfp_text: str, kb_chunks: List[str], project=None, quest
         '      "Effort Months": number\n'
         "    }\n"
         "  ],\n"
-        '  "resourcing_plan": []\n'
+        '  "resourcing_plan": [],\n'
+        '  "project_summary": {\n'
+        '    "executive_summary": string (2-3 paragraphs overview),\n'
+        '    "key_deliverables": [string] (list of 5-7 main deliverables),\n'
+        '    "success_criteria": [string] (list of 3-5 success metrics),\n'
+        '    "risks_and_mitigation": [{"risk": string, "mitigation": string}] (3-4 key risks)\n'
+        "  }\n"
         "}\n\n"
         "Scheduling Rules: \n"
         f"- The first activity must always start today ({today_str}).\n"
@@ -374,6 +380,11 @@ def _build_scope_prompt(rfp_text: str, kb_chunks: List[str], project=None, quest
         "- If the RFP or Knowledge Base text lacks detail, infer the missing pieces logically."
         "- Include all relevant roles and activities that ensure delivery of the project scope."
         "- Keep all field names exactly as in the schema.\n"
+        "- Generate a comprehensive project_summary with:\n"
+        "  * executive_summary: 2-3 paragraph high-level overview of the project, objectives, and expected outcomes\n"
+        "  * key_deliverables: List 5-7 concrete deliverables (e.g., 'Production-ready web application', 'API documentation', etc.)\n"
+        "  * success_criteria: List 3-5 measurable success metrics (e.g., '99.9% uptime', 'Response time < 200ms', etc.)\n"
+        "  * risks_and_mitigation: List 3-4 key risks with mitigation strategies (e.g., risk: 'Third-party API dependency', mitigation: 'Implement fallback mechanisms')\n"
         f"{user_context}"
         f"RFP / Project Files Content:\n{rfp_text}\n\n"
         f"Knowledge Base Context (for enrichment only):\n{kb_context}\n"
@@ -1285,7 +1296,16 @@ Create a comprehensive project plan with the following phases:
    Owner: DevOps Engineer
    Resources: Technical Lead, Backend Developer
 
-Generate activities with realistic start/end dates, proper role assignments, and meaningful descriptions.
+Project Summary:
+- Executive Summary: This project aims to develop a comprehensive web application using React and Node.js to streamline business operations. The solution will provide an intuitive user interface for data management, real-time analytics, and seamless integration with existing systems. Expected outcomes include improved operational efficiency, reduced manual errors, and enhanced user experience.
+
+- Key Deliverables: Production-ready web application, REST API with comprehensive documentation, PostgreSQL database with optimized schema, AWS cloud infrastructure setup, User documentation and training materials, Automated testing suite, Performance monitoring dashboard
+
+- Success Criteria: 99.5% application uptime, Page load time under 2 seconds, Support for 1000+ concurrent users, Zero critical security vulnerabilities, 95% user satisfaction score
+
+- Risks: Third-party API downtime (Mitigation: Implement caching and fallback mechanisms), Database performance bottlenecks (Mitigation: Implement proper indexing and query optimization), Resource availability constraints (Mitigation: Cross-train team members and maintain documentation)
+
+Generate activities with realistic start/end dates, proper role assignments, meaningful descriptions, and a comprehensive project summary.
 """
 
     kb_results = _rag_retrieve(rfp_text or fallback_text)
