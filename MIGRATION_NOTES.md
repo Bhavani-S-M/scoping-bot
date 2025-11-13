@@ -2,7 +2,7 @@
 
 ## Issues Fixed
 
-This update fixes six critical issues in the scoping-bot application:
+This update fixes seven critical issues in the scoping-bot application:
 
 ### 1. Embedding Dimension Mismatch (CRITICAL)
 
@@ -93,6 +93,24 @@ This update fixes six critical issues in the scoping-bot application:
 
 **Files Changed:**
 - `backend/app/utils/scope_engine.py:1433-1580`
+
+### 7. PDF Export Error - Image Too Large
+
+**Problem:**
+- Architecture diagram images were too large for PDF page
+- Only width constraint was applied, not height
+- Large/tall images caused `LayoutError: Flowable too large on page`
+- Error: Image 780 x 1248 points exceeds frame 857 x 1122 points
+
+**Fix:**
+- Added max_height constraint (1000 points) in addition to max_width (780 points)
+- Calculate both width_scale and height_scale
+- Use minimum scale factor to fit within BOTH dimensions
+- Maintains aspect ratio while preventing page overflow
+- Updated table column widths to match scaled image width
+
+**Files Changed:**
+- `backend/app/utils/export.py:332-353`
 
 ## Required Actions
 
