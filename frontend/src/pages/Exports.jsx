@@ -351,7 +351,7 @@ export default function Exports() {
         toast.error(`Failed to load PDF preview: ${err.message || 'Unknown error'}`);
       }
     })();
-  }, [activeTab, parsedDraft, isFinalized, id, getPdfBlob, previewPdf, previewPdfUrl]);
+  }, [activeTab, parsedDraft, isFinalized, id, getPdfBlob, previewPdf]);  // REMOVED previewPdfUrl from deps!
 
   // Auto-refresh Excel preview
   useEffect(() => {
