@@ -1,4 +1,4 @@
-#!/home/sigmoid/Documents/scop_bot/backend/venv/bin/python3
+#!/home/sigmoid/scoping-bot/backend/venv/bin/python3
 """Extract pdf structure in XML format"""
 import logging
 import os.path

@@ -6,6 +6,7 @@ from azure.storage.blob import generate_container_sas, ContainerSasPermissions
 from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
 from app.config import config
 from datetime import datetime, timedelta
+# from app.utils.blob_to_qdrant import process_blob_and_store_vectors
 
 # Config
 AZURE_STORAGE_ACCOUNT = config.AZURE_STORAGE_ACCOUNT
@@ -249,3 +250,13 @@ def generate_sas_url(expiry_hours: int = 1) -> str:
         expiry=datetime.utcnow() + timedelta(hours=expiry_hours),
     )
     return f"https://{AZURE_STORAGE_ACCOUNT}.blob.core.windows.net/{AZURE_STORAGE_CONTAINER}?{sas_token}"
+
+# setting up the ETL from blob to qdrant
+
+# def upload_blob(file):
+#     # existing blob upload logic
+#     blob_client.upload_blob(file)
+#     logger.info(f"Uploaded {file.filename} to Azure Blob.")
+
+#     # Trigger ETL → Qdrant
+#     process_blob_and_store_vectors(file.filename)

@@ -54,4 +54,3 @@ black
 isort
 autoflake
 aiosqlite>=0.19.0
-
