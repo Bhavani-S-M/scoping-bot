@@ -1232,21 +1232,10 @@ async def generate_project_scope(db: AsyncSession, project) -> dict:
     ]
     fallback_text = " ".join(f for f in fallback_fields if f and str(f).strip())
 
+    # If completely empty, create a minimal generic prompt instead of returning empty scope
     if not (rfp_text.strip() or fallback_text.strip()):
-        return {
-            "overview": {
-                "Project Name": "Untitled Project",
-                "Domain": "TBD",
-                "Complexity": "TBD",
-                "Tech Stack": "TBD",
-                "Use Cases": "TBD",
-                "Compliance": "TBD",
-                "Duration": 1,
-            },
-            "activities": [],
-            "resourcing_plan": [],
-            "architecture_diagram": None,
-        }
+        logger.warning(f"⚠️ No RFP text or project metadata for project {project.id}. Using generic prompt.")
+        fallback_text = "Generate a basic software development project scope with standard phases including requirements gathering, design, development, testing, and deployment."
 
     kb_results = _rag_retrieve(rfp_text or fallback_text)
     kb_chunks = []
