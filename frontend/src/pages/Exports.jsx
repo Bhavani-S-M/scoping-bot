@@ -319,12 +319,21 @@ export default function Exports() {
 
     (async () => {
       try {
+        console.log("🔄 Starting PDF preview generation...");
+        console.log("  - isFinalized:", isFinalized);
+        console.log("  - parsedDraft keys:", Object.keys(parsedDraft));
+
         const blob = isFinalized
           ? await getPdfBlob(id)
           : await previewPdf(id, parsedDraft);
 
+        console.log("📦 PDF blob received:");
+        console.log("  - Blob size:", blob?.size);
+        console.log("  - Blob type:", blob?.type);
+
         if (!blob || blob.size === 0 || blob.type !== "application/pdf") {
-          toast.error(" Invalid PDF generated.");
+          console.error("❌ Invalid PDF blob:", { blob, size: blob?.size, type: blob?.type });
+          toast.error("Invalid PDF generated. Please check the console for details.");
           return;
         }
 
@@ -332,10 +341,14 @@ export default function Exports() {
         lastPdfKeyRef.current = currentKey;
 
         if (previewPdfUrl) URL.revokeObjectURL(previewPdfUrl);
-        setPreviewPdfUrl(URL.createObjectURL(blob));
+        const newUrl = URL.createObjectURL(blob);
+        console.log("✅ PDF preview URL created:", newUrl);
+        setPreviewPdfUrl(newUrl);
       } catch (err) {
-        console.error(" Failed to load PDF preview:", err);
-        toast.error("Failed to load PDF preview.");
+        console.error("❌ Failed to load PDF preview:", err);
+        console.error("  - Error message:", err.message);
+        console.error("  - Error stack:", err.stack);
+        toast.error(`Failed to load PDF preview: ${err.message || 'Unknown error'}`);
       }
     })();
   }, [activeTab, parsedDraft, isFinalized, id, getPdfBlob, previewPdf, previewPdfUrl]);
@@ -380,9 +393,11 @@ export default function Exports() {
               (acc, m) => acc + (parseFloat(r[m] || 0) || 0),
               0
             );
-            const rate = parseFloat(r["Rate/month"] || 0);
             totalEfforts += sumMonths;
-            totalCost += sumMonths * rate;
+
+            // Use the actual Cost field (which includes discount) instead of recalculating
+            const actualCost = parseFloat(r["Cost"] || 0);
+            totalCost += actualCost;
           });
 
           const totalRow = headers.map((h, idx) => {

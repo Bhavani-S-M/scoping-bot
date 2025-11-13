@@ -12,6 +12,7 @@ from app.config.database import get_async_session
 from app.auth.router import fastapi_users
 from app.utils import export, scope_engine
 
+logger = logging.getLogger(__name__)
 current_active_user = fastapi_users.current_user(active=True)
 
 router = APIRouter(prefix="/api/projects/{project_id}/export", tags=["Export"])
@@ -92,16 +93,41 @@ async def preview_pdf_from_scope(
     db: AsyncSession = Depends(get_async_session),
     current_user: models.User = Depends(current_active_user),
 ):
-    project = await _get_project(project_id, current_user.id, db)
-    finalized = await _load_finalized_scope(project)
-    normalized = export.generate_json_data(scope or {}) if not finalized else finalized
-    file = await export.generate_pdf(normalized)
-    safe_name = _safe_filename(normalized.get("overview", {}).get("Project Name") or f"project_{project_id}")
-    return StreamingResponse(
-        file,
-        media_type="application/pdf",
-        headers={"Content-Disposition": f"attachment; filename={safe_name}_{project_id}_preview.pdf"},
-    )
+    try:
+        logger.info(f"📄 Generating PDF preview for project {project_id}")
+        project = await _get_project(project_id, current_user.id, db)
+        finalized = await _load_finalized_scope(project)
+        normalized = export.generate_json_data(scope or {}) if not finalized else finalized
+
+        logger.info(f"  - Activities count: {len(normalized.get('activities', []))}")
+        logger.info(f"  - Resourcing plan count: {len(normalized.get('resourcing_plan', []))}")
+        logger.info(f"  - Has discount: {normalized.get('discount_percentage', 0) > 0}")
+
+        file = await export.generate_pdf(normalized)
+
+        # Check if file is valid
+        file.seek(0, 2)  # Seek to end
+        file_size = file.tell()
+        file.seek(0)  # Reset to beginning
+        logger.info(f"✅ PDF generated successfully - Size: {file_size} bytes")
+
+        if file_size == 0:
+            logger.error("❌ Generated PDF is empty!")
+            raise HTTPException(status_code=500, detail="Generated PDF is empty")
+
+        safe_name = _safe_filename(normalized.get("overview", {}).get("Project Name") or f"project_{project_id}")
+        return StreamingResponse(
+            file,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f"attachment; filename={safe_name}_{project_id}_preview.pdf"},
+        )
+    except Exception as e:
+        logger.error(f"❌ PDF preview generation failed for project {project_id}: {e}")
+        logger.error(f"   Error type: {type(e).__name__}")
+        logger.error(f"   Error details: {str(e)}")
+        import traceback
+        logger.error(f"   Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"PDF generation failed: {str(e)}")
 
 
 # FINALIZED EXPORTS
