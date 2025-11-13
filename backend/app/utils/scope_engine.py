@@ -1424,7 +1424,7 @@ Your task:
 **CRITICAL: What activities look like**
 CORRECT activity example:
 ```json
-{
+{{
   "ID": 1,
   "Activities": "Project Initiation and Requirements Gathering",
   "Description": "Define project scope, gather requirements, create initial documentation",
@@ -1433,12 +1433,12 @@ CORRECT activity example:
   "Start Date": "2025-01-15",
   "End Date": "2025-02-28",
   "Effort Months": 1.5
-}
+}}
 ```
 
 WRONG activity example (DO NOT DO THIS):
 ```json
-{
+{{
   "ID": 1,
   "Activities": "Project Manager",  ← WRONG! This is a role name, not an activity!
   "Description": "",  ← WRONG! Must have meaningful description!
@@ -1447,7 +1447,7 @@ WRONG activity example (DO NOT DO THIS):
   "Start Date": "2025-01-15",
   "End Date": "2025-02-15",
   "Effort Months": 1
-}
+}}
 ```
 
 ####  Temporal Adjustment Rules
