@@ -269,6 +269,7 @@ async def regenerate_scope_with_instructions(
             activities=regen_scope.get("activities", []),
             resourcing_plan=regen_scope.get("resourcing_plan", []),
             architecture_diagram=regen_scope.get("architecture_diagram", None),
+            discount_percentage=regen_scope.get("discount_percentage", None),
         )
 
     except Exception as e:

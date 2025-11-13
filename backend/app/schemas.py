@@ -132,6 +132,7 @@ class GeneratedScopeResponse(BaseModel):
     activities: List[Dict[str, Any]] = []
     resourcing_plan: List[Dict[str, Any]] = []
     architecture_diagram: Optional[str] = None
+    discount_percentage: Optional[float] = None  # Add discount support
     _finalized: Optional[bool] = None
 
 

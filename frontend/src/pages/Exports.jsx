@@ -788,6 +788,17 @@ export default function Exports() {
             </div>
           )}
 
+          {/* Notice about saving edits */}
+          {excelSection && excelPreview.headers.length > 0 && (
+            <div className="mt-2 p-3 bg-amber-50 border border-amber-200 rounded-lg flex items-start gap-2">
+              <span className="text-amber-600 text-lg">ℹ️</span>
+              <div className="text-sm text-amber-800">
+                <strong>Editing Note:</strong> Changes made to this table are temporary and will be lost when you refresh.
+                To make permanent changes, use the chat box below to request modifications (e.g., "change Data Engineer rate to $3000", "increase Backend Developer effort by 2 months").
+              </div>
+            </div>
+          )}
+
           {excelPreview.headers.length ? (
             <div className="overflow-x-auto max-h-[500px] border border-gray-200 rounded-lg shadow">
               <table className="min-w-full text-sm border-collapse">
