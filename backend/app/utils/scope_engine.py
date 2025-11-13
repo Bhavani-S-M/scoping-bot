@@ -1232,10 +1232,61 @@ async def generate_project_scope(db: AsyncSession, project) -> dict:
     ]
     fallback_text = " ".join(f for f in fallback_fields if f and str(f).strip())
 
-    # If completely empty, create a minimal generic prompt instead of returning empty scope
+    # If completely empty, create a detailed specific prompt instead of returning empty scope
     if not (rfp_text.strip() or fallback_text.strip()):
-        logger.warning(f"⚠️ No RFP text or project metadata for project {project.id}. Using generic prompt.")
-        fallback_text = "Generate a basic software development project scope with standard phases including requirements gathering, design, development, testing, and deployment."
+        logger.warning(f"⚠️ No RFP text or project metadata for project {project.id}. Using detailed generic prompt.")
+        fallback_text = """
+Project Requirements:
+- Project Type: Software Development Project
+- Domain: Web Application Development
+- Complexity: Medium
+- Tech Stack: React, Node.js, PostgreSQL, AWS
+- Duration: 6 months
+- Team Size: 5-7 people
+
+Project Scope:
+Create a comprehensive project plan with the following phases:
+
+1. Requirements & Planning Phase (1 month)
+   - Gather and document requirements
+   - Create technical specifications
+   - Set up project infrastructure
+   Owner: Project Manager
+   Resources: Business Analyst, Technical Lead
+
+2. Design Phase (1 month)
+   - Design system architecture
+   - Create UI/UX mockups
+   - Database schema design
+   Owner: Solution Architect
+   Resources: UI/UX Designer, Database Administrator
+
+3. Development Phase (2.5 months)
+   - Frontend development (React)
+   - Backend API development (Node.js)
+   - Database implementation
+   - Integration testing
+   Owner: Technical Lead
+   Resources: Frontend Developer, Backend Developer, QA Engineer
+
+4. Testing & QA Phase (1 month)
+   - Unit testing
+   - Integration testing
+   - User acceptance testing
+   - Bug fixes
+   Owner: QA Lead
+   Resources: QA Engineer, Backend Developer
+
+5. Deployment & Go-Live (0.5 months)
+   - Production deployment
+   - Performance optimization
+   - Documentation
+   - Training
+   Owner: DevOps Engineer
+   Resources: Technical Lead, Backend Developer
+
+Generate activities with realistic start/end dates, proper role assignments, and meaningful descriptions.
+"""
 
     kb_results = _rag_retrieve(rfp_text or fallback_text)
     kb_chunks = []
@@ -1292,8 +1343,40 @@ async def generate_project_scope(db: AsyncSession, project) -> dict:
     prompt = _build_scope_prompt(rfp_text, kb_chunks, project, questions_context=questions_context)
     try:
         # Step 1: Generate scope via Ollama
+        logger.info(f"🤖 Calling Ollama for scope generation... (prompt length: {len(prompt)} chars)")
         raw_text = await anyio.to_thread.run_sync(lambda: ollama_chat(prompt))
+        logger.info(f"📝 Ollama raw response length: {len(raw_text)} chars")
+        logger.debug(f"📝 Ollama response preview (first 500 chars): {raw_text[:500]}")
+
+        if not raw_text or len(raw_text.strip()) < 50:
+            logger.error(f"❌ Ollama returned empty or too short response: {len(raw_text)} chars")
+            logger.error("   This usually means:")
+            logger.error("   1. Ollama service is not running properly")
+            logger.error("   2. The model (deepseek-r1) is not loaded")
+            logger.error("   3. Out of memory or timeout")
+            return {}
+
         raw = _extract_json(raw_text)
+
+        # Validate that LLM actually generated content, not just structure
+        if raw.get('activities'):
+            activities = raw.get('activities', [])
+            empty_fields_count = 0
+            for act in activities:
+                if (not act.get('Activities', '').strip() or
+                    not act.get('Description', '').strip() or
+                    act.get('Owner', '').lower() in ['unassigned', '']):
+                    empty_fields_count += 1
+
+            if empty_fields_count > len(activities) * 0.7:  # More than 70% are garbage
+                logger.error(f"❌ LLM returned {empty_fields_count}/{len(activities)} activities with empty/invalid content!")
+                logger.error("   This means Ollama generated JSON structure but NO actual content.")
+                logger.error("   Check if:")
+                logger.error("   1. Ollama service is running: curl http://localhost:11434/api/tags")
+                logger.error("   2. Model is loaded: ollama list")
+                logger.error("   3. Sufficient memory available")
+                return {}
+
         cleaned_scope = await clean_scope(db, raw, project=project)
         # Update project fields from generated overview (just like finalize_scope)
         overview = cleaned_scope.get("overview", {})
