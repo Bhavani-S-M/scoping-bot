@@ -368,6 +368,9 @@ def generate_xlsx(scope: Dict[str, Any]) -> io.BytesIO:
 # PDF EXPORT
 async def generate_pdf(scope: Dict[str, Any]) -> io.BytesIO:
     data = scope or {}
+    logger.info(f"📄 Generating PDF with scope data keys: {list(data.keys())}")
+    logger.info(f"  - Has architecture_diagram: {'architecture_diagram' in data}")
+    logger.info(f"  - Has project_summary: {'project_summary' in data}")
     currency = (data.get("overview", {}) or {}).get("Currency", "USD").upper()
     symbol = "Rs. " if currency == "INR" else CURRENCY_SYMBOLS.get(currency, "$")
 
@@ -398,6 +401,7 @@ async def generate_pdf(scope: Dict[str, Any]) -> io.BytesIO:
 
     # -------- Architecture Diagram --------
     arch_path = data.get("architecture_diagram")
+    logger.info(f"🔍 Architecture diagram path in scope data: {arch_path}")
     if arch_path:
         try:
             logger.info(f"📊 Attempting to download architecture diagram from: {arch_path}")
@@ -691,7 +695,9 @@ async def generate_pdf(scope: Dict[str, Any]) -> io.BytesIO:
 
     # -------- Project Summary --------
     summary = data.get("project_summary", {})
+    logger.info(f"📋 Project summary in scope data: {bool(summary)} (keys: {list(summary.keys()) if summary else 'None'})")
     if summary and isinstance(summary, dict):
+        logger.info(f"✅ Adding Project Summary section to PDF")
         elems.append(PageBreak())
         elems.append(Paragraph("<b>Project Summary</b>", styles["Heading1"]))
         elems.append(Spacer(1, 0.4 * cm))
