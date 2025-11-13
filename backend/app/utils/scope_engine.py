@@ -1424,11 +1424,38 @@ Use these to keep the schedule consistent and continuous.
 - Combined duration = original.  
 - Other activities’ dates stay the same.
 
-**Merge two activities**  
-- Combine both into one.  
-- start_date = min(start of both)  
-- end_date = max(end of both)  
+**Merge two activities**
+- Combine both into one.
+- start_date = min(start of both)
+- end_date = max(end of both)
 - effort_days = sum(efforts of both)
+
+####  Role Management Rules
+Critical: When user requests to add or remove roles, you MUST update BOTH activities and resourcing_plan.
+
+**Remove a role (e.g., "remove Business Analyst")**:
+1. Find all activities where the role is the Owner
+2. Reassign those activities to another appropriate role
+3. Remove the role from ALL Resources fields across all activities
+4. REMOVE the role completely from resourcing_plan
+5. Example: If removing "Business Analyst":
+   - Activity: "Owner": "Business Analyst" → change to "Owner": "Product Manager"
+   - Activity: "Resources": "Business Analyst, Data Engineer" → change to "Resources": "Data Engineer"
+   - resourcing_plan: DELETE the entire entry for "Business Analyst"
+
+**Add more of an existing role (e.g., "add 1 more Backend Developer")**:
+1. Keep activities unchanged (or add new activities if appropriate)
+2. The resourcing_plan will be auto-calculated based on activities
+3. If you want to increase Backend Developer allocation, add them to more activities or extend their participation
+4. Example: "add 1 Backend Developer" means:
+   - Add "Backend Developer" to Resources field of activities that need backend work
+   - Or create new activities owned by "Backend Developer"
+   - The clean_scope function will automatically calculate effort based on activity dates
+
+**Add a new role type (e.g., "add Security Engineer")**:
+1. Identify activities that would benefit from this role
+2. Either create new activities for this role OR add to Resources field of existing activities
+3. The resourcing_plan will be auto-generated based on activities
 
 ### Scheduling Rules
 - Activities should follow **semi-parallel execution** — overlap realistically but maintain logical order.
@@ -1450,12 +1477,15 @@ Use these to keep the schedule consistent and continuous.
 ---
 
 ###  Output Rules
-- Output **only valid JSON** — no markdown, no explanations.
+- Output **only valid JSON** — no markdown, no explanations, no reasoning.
 - Must include:
-  - `overview` → title, duration_months
-  - `activities` → updated list with all date/effort logic applied
-  - `resourcing_plan` → roles and counts consistent with changes
-  - **Dont change schema or field names.**
+  - `overview` → Project metadata (name, domain, complexity, tech stack, etc.)
+  - `activities` → COMPLETE updated list with ALL modifications applied
+  - `resourcing_plan` → OPTIONAL (will be auto-calculated from activities)
+- **CRITICAL**: If user says "remove [role]", that role MUST NOT appear in ANY activity's Owner or Resources field
+- **CRITICAL**: If user says "add [role]", that role MUST appear in appropriate activities
+- **Dont change schema or field names.**
+- Ensure ALL activities are included in output - don't omit any unless explicitly deleted
 
 ---
 
@@ -1470,8 +1500,9 @@ Return only the updated JSON.
 
 
     # ---- Query Ollama creatively ----
+    # Use lower temperature for more consistent instruction-following
     try:
-        raw_text = await anyio.to_thread.run_sync(lambda: ollama_chat(prompt, temperature=0.5))
+        raw_text = await anyio.to_thread.run_sync(lambda: ollama_chat(prompt, temperature=0.2))
         logger.info(f"🤖 LLM response length: {len(raw_text)} chars")
         logger.debug(f"LLM raw response (first 500 chars): {raw_text[:500]}")
         updated_scope = _extract_json(raw_text)
@@ -1479,6 +1510,75 @@ Return only the updated JSON.
         logger.info(f"📊 Extracted scope structure: overview={bool(updated_scope.get('overview'))}, "
                    f"activities={len(updated_scope.get('activities', []))}, "
                    f"resourcing_plan={len(updated_scope.get('resourcing_plan', []))}")
+
+        # Log roles found in activities
+        if updated_scope.get('activities'):
+            owners = set(act.get('Owner', 'Unknown') for act in updated_scope['activities'])
+            all_resources = set()
+            for act in updated_scope['activities']:
+                resources = act.get('Resources', '')
+                if resources:
+                    all_resources.update(r.strip() for r in str(resources).split(',') if r.strip())
+            all_roles = owners | all_resources
+            logger.info(f"🎭 Roles in LLM response - Owners: {owners}, Resources: {all_resources}")
+
+            # Validate that "remove" instructions were followed
+            if instructions and 'remove' in instructions.lower():
+                for role in all_roles:
+                    if role.lower() in instructions.lower() and 'remove' in instructions.lower():
+                        logger.error(f"❌ LLM FAILED to remove '{role}' - still present in activities despite user instruction!")
+
+            # Validate that "add" instructions were followed
+            if instructions and 'add' in instructions.lower():
+                # This is harder to validate automatically, but we log for manual inspection
+                logger.info(f"ℹ️ User requested to add role(s). Current roles: {all_roles}")
+
+        # Post-processing fallback: manually remove roles if LLM failed
+        if instructions and 'remove' in instructions.lower() and updated_scope.get('activities'):
+            # Extract role to remove from instructions (basic pattern matching)
+            import re
+            remove_pattern = r'remove\s+(.+?)(?:\s+|$)'
+            match = re.search(remove_pattern, instructions.lower())
+            if match:
+                role_to_remove = match.group(1).strip()
+                logger.info(f"🔧 Post-processing: attempting to remove '{role_to_remove}'")
+
+                # Track if we made changes
+                changes_made = False
+
+                # Process each activity
+                for act in updated_scope['activities']:
+                    # Check if this role is the owner
+                    if act.get('Owner', '').lower() == role_to_remove or role_to_remove in act.get('Owner', '').lower():
+                        # Find a replacement owner from resources or use a default
+                        resources = act.get('Resources', '')
+                        if resources and resources.strip():
+                            # Use the first resource as the new owner
+                            new_owner = resources.split(',')[0].strip()
+                            # Remove new owner from resources to avoid duplication
+                            remaining_resources = [r.strip() for r in resources.split(',')[1:] if r.strip()]
+                            act['Owner'] = new_owner
+                            act['Resources'] = ', '.join(remaining_resources)
+                            logger.info(f"  → Reassigned activity '{act.get('Activities', 'Unknown')}' from removed role to '{new_owner}'")
+                            changes_made = True
+                        else:
+                            # No resources available, use a generic default
+                            act['Owner'] = 'Project Manager'
+                            logger.info(f"  → Reassigned activity '{act.get('Activities', 'Unknown')}' from removed role to 'Project Manager'")
+                            changes_made = True
+
+                    # Remove from resources field
+                    if act.get('Resources'):
+                        resources_list = [r.strip() for r in str(act['Resources']).split(',') if r.strip()]
+                        # Filter out the role to remove (case-insensitive partial match)
+                        filtered_resources = [r for r in resources_list
+                                             if role_to_remove not in r.lower() and r.lower() != role_to_remove]
+                        if len(filtered_resources) != len(resources_list):
+                            act['Resources'] = ', '.join(filtered_resources)
+                            changes_made = True
+
+                if changes_made:
+                    logger.info(f"✅ Post-processing successfully removed role '{role_to_remove}' from activities")
 
         # Safety check: if LLM returned empty activities, preserve original
         if not updated_scope.get("activities") or len(updated_scope.get("activities", [])) == 0:
