@@ -1,12 +1,14 @@
 # app/utils/export.py
 from __future__ import annotations
-import io, json
+import io, json, logging
 from datetime import datetime, timezone, timedelta
 from textwrap import wrap
 from typing import Any, Dict
 from reportlab.platypus import Image as RLImage
 import xlsxwriter
 from app.utils import azure_blob
+
+logger = logging.getLogger(__name__)
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.units import cm
 from reportlab.lib import colors
@@ -334,8 +336,24 @@ async def generate_pdf(scope: Dict[str, Any]) -> io.BytesIO:
     arch_path = data.get("architecture_diagram")
     if arch_path:
         try:
-            # Download image bytes from blob
-            img_bytes = await azure_blob.download_bytes(arch_path)
+            logger.info(f"📊 Attempting to download architecture diagram from: {arch_path}")
+
+            # Add timeout protection for blob download (5 seconds max)
+            import asyncio
+            try:
+                img_bytes = await asyncio.wait_for(
+                    azure_blob.download_bytes(arch_path),
+                    timeout=5.0
+                )
+            except asyncio.TimeoutError:
+                logger.warning(f"⏱️ Architecture diagram download timed out after 5s - skipping")
+                raise Exception("Blob download timeout")
+
+            if not img_bytes or len(img_bytes) == 0:
+                logger.warning(f"⚠️ Architecture diagram is empty - skipping")
+                raise Exception("Empty blob")
+
+            logger.info(f"✅ Downloaded architecture diagram: {len(img_bytes)} bytes")
             img_buf = io.BytesIO(img_bytes)
 
             # Section header
@@ -374,9 +392,17 @@ async def generate_pdf(scope: Dict[str, Any]) -> io.BytesIO:
 
             elems.append(img_table)
             elems.append(Spacer(1, 0.6 * cm))
+            logger.info(f"✅ Architecture diagram embedded successfully")
 
         except Exception as e:
-            print(f" Failed to embed architecture diagram: {e}")
+            logger.error(f"❌ Failed to embed architecture diagram: {e}")
+            # Add a notice in PDF that diagram is unavailable
+            elems.append(Paragraph("<b>System Architecture</b>", styles["Heading2"]))
+            elems.append(Paragraph(
+                "<i>Architecture diagram unavailable (failed to load from storage)</i>",
+                wrap
+            ))
+            elems.append(Spacer(1, 0.6 * cm))
 
     # -------- Overview --------
     ov = data.get("overview", {})
