@@ -264,3 +264,128 @@ def delete_blob_after_file_delete(mapper, connection, target):
 
     except Exception as e:
         print(f"[File] Failed to delete blob {getattr(target, 'file_path', None)}: {e}")
+
+
+# ETL PIPELINE MODELS
+class KnowledgeBaseDocument(Base):
+    """Track knowledge base documents in blob storage and their vector status."""
+    __tablename__ = "knowledge_base_documents"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True
+    )
+    file_name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    blob_path: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    file_hash: Mapped[str] = mapped_column(String(64), nullable=False)  # SHA256 hash
+    file_size: Mapped[int] = mapped_column(nullable=False)
+
+    # Vector status
+    is_vectorized: Mapped[bool] = mapped_column(default=False, index=True)
+    qdrant_point_ids: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array of point IDs
+    vector_count: Mapped[int] = mapped_column(default=0)
+
+    # Timestamps
+    uploaded_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    vectorized_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_checked: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    def __repr__(self):
+        return f"<KBDocument({self.file_name}, vectorized={self.is_vectorized})>"
+
+
+class DocumentProcessingJob(Base):
+    """Track ETL processing jobs for documents."""
+    __tablename__ = "document_processing_jobs"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True
+    )
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("knowledge_base_documents.id", ondelete="CASCADE"),
+        index=True
+    )
+
+    # Job status
+    status: Mapped[str] = mapped_column(
+        String(50), default="pending", index=True
+    )  # pending, processing, completed, failed
+
+    # Processing details
+    chunks_processed: Mapped[int] = mapped_column(default=0)
+    vectors_created: Mapped[int] = mapped_column(default=0)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Timestamps
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    started_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    completed_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    def __repr__(self):
+        return f"<ProcessingJob({self.status}, doc={str(self.document_id)[:8]})>"
+
+
+class PendingKBUpdate(Base):
+    """Track pending admin approvals for KB document updates."""
+    __tablename__ = "pending_kb_updates"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True
+    )
+
+    # New document info
+    new_document_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("knowledge_base_documents.id", ondelete="CASCADE"),
+        index=True
+    )
+
+    # Related existing documents (detected by similarity)
+    related_documents: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )  # JSON array of {document_id, file_name, similarity_score}
+
+    # Update type and reason
+    update_type: Mapped[str] = mapped_column(
+        String(50), default="new"
+    )  # new, update, duplicate
+    similarity_score: Mapped[float | None] = mapped_column(
+        Float, nullable=True
+    )
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Approval status
+    status: Mapped[str] = mapped_column(
+        String(50), default="pending", index=True
+    )  # pending, approved, rejected
+
+    # Admin action
+    reviewed_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True
+    )
+    reviewed_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    admin_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Timestamps
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+    def __repr__(self):
+        return f"<PendingKBUpdate({self.update_type}, status={self.status})>"
