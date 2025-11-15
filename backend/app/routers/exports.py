@@ -93,6 +93,7 @@ async def preview_pdf_from_scope(
     db: AsyncSession = Depends(get_async_session),
     current_user: models.User = Depends(current_active_user),
 ):
+    import asyncio
     try:
         logger.info(f"📄 Generating PDF preview for project {project_id}")
         project = await _get_project(project_id, current_user.id, db)
@@ -102,8 +103,20 @@ async def preview_pdf_from_scope(
         logger.info(f"  - Activities count: {len(normalized.get('activities', []))}")
         logger.info(f"  - Resourcing plan count: {len(normalized.get('resourcing_plan', []))}")
         logger.info(f"  - Has discount: {normalized.get('discount_percentage', 0) > 0}")
+        logger.info(f"  - Architecture diagram: {normalized.get('architecture_diagram', 'None')}")
 
-        file = await export.generate_pdf(normalized)
+        # Add timeout protection for PDF generation (60 seconds max)
+        try:
+            file = await asyncio.wait_for(
+                export.generate_pdf(normalized),
+                timeout=60.0
+            )
+        except asyncio.TimeoutError:
+            logger.error("❌ PDF generation timed out after 60 seconds!")
+            raise HTTPException(
+                status_code=504,
+                detail="PDF generation timed out. This usually means the architecture diagram is too large or blob storage is slow."
+            )
 
         # Check if file is valid
         file.seek(0, 2)  # Seek to end
@@ -121,6 +134,8 @@ async def preview_pdf_from_scope(
             media_type="application/pdf",
             headers={"Content-Disposition": f"attachment; filename={safe_name}_{project_id}_preview.pdf"},
         )
+    except HTTPException:
+        raise  # Re-raise HTTP exceptions as-is
     except Exception as e:
         logger.error(f"❌ PDF preview generation failed for project {project_id}: {e}")
         logger.error(f"   Error type: {type(e).__name__}")
@@ -167,10 +182,24 @@ async def export_project_pdf(
     db: AsyncSession = Depends(get_async_session),
     current_user: models.User = Depends(current_active_user),
 ):
+    import asyncio
     project = await _get_project(project_id, current_user.id, db)
     scope = await _ensure_scope(project, db)
     normalized = export.generate_json_data(scope or {})
-    file = await export.generate_pdf(normalized)
+
+    # Add timeout protection for PDF generation (60 seconds max)
+    try:
+        file = await asyncio.wait_for(
+            export.generate_pdf(normalized),
+            timeout=60.0
+        )
+    except asyncio.TimeoutError:
+        logger.error("❌ PDF export timed out after 60 seconds!")
+        raise HTTPException(
+            status_code=504,
+            detail="PDF generation timed out. This usually means the architecture diagram is too large or blob storage is slow."
+        )
+
     safe_name = _safe_filename(project.name or f"project_{project.id}")
     return StreamingResponse(
         file,

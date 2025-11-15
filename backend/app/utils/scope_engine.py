@@ -134,6 +134,74 @@ async def get_rate_map_for_project(db: AsyncSession, project) -> Dict[str, float
     return ROLE_RATE_MAP
 
 
+def extract_text_from_file(file_bytes_io: BytesIO, file_name: str) -> str:
+    """
+    Extract text from a file given its bytes and filename.
+
+    Args:
+        file_bytes_io: BytesIO object containing file bytes
+        file_name: Name of the file (used to determine file type)
+
+    Returns:
+        Extracted text content
+    """
+    suffix = os.path.splitext(file_name)[-1].lower()
+    file_bytes = file_bytes_io.read()
+    file_bytes_io.seek(0)  # Reset for potential re-reading
+
+    content = ""
+    try:
+        if suffix == ".pdf":
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                tmp.write(file_bytes)
+                tmp_path = tmp.name
+            try:
+                content = extract_pdf_text(tmp_path)
+            finally:
+                os.remove(tmp_path)
+
+        elif suffix == ".docx":
+            doc = Document(BytesIO(file_bytes))
+            content = "\n".join(p.text for p in doc.paragraphs)
+
+        elif suffix == ".pptx":
+            prs = Presentation(BytesIO(file_bytes))
+            texts = []
+            for slide in prs.slides:
+                for shape in slide.shapes:
+                    if hasattr(shape, "text"):
+                        texts.append(shape.text)
+            content = "\n".join(texts)
+
+        elif suffix in [".xlsx", ".xlsm"]:
+            wb = openpyxl.load_workbook(BytesIO(file_bytes))
+            sheet = wb.active
+            content = "\n".join(
+                " ".join(str(cell) if cell else "" for cell in row)
+                for row in sheet.iter_rows(values_only=True)
+            )
+
+        elif suffix in [".png", ".jpg", ".jpeg", ".tiff"]:
+            img = Image.open(BytesIO(file_bytes))
+            content = pytesseract.image_to_string(img)
+
+        else:
+            # Try as text file
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                tmp.write(file_bytes)
+                tmp_path = tmp.name
+            try:
+                with open(tmp_path, "r", encoding="utf-8", errors="ignore") as fh:
+                    content = fh.read()
+            finally:
+                os.remove(tmp_path)
+
+    except Exception as e:
+        logger.warning(f"Text extraction failed for {file_name}: {e}")
+
+    return content.strip()
+
+
 async def _extract_text_from_files(files: List[dict]) -> str:
     results: List[str] = []
 
@@ -350,7 +418,13 @@ def _build_scope_prompt(rfp_text: str, kb_chunks: List[str], project=None, quest
         '      "Effort Months": number\n'
         "    }\n"
         "  ],\n"
-        '  "resourcing_plan": []\n'
+        '  "resourcing_plan": [],\n'
+        '  "project_summary": {\n'
+        '    "executive_summary": string (2-3 paragraphs overview),\n'
+        '    "key_deliverables": [string] (list of 5-7 main deliverables),\n'
+        '    "success_criteria": [string] (list of 3-5 success metrics),\n'
+        '    "risks_and_mitigation": [{"risk": string, "mitigation": string}] (3-4 key risks)\n'
+        "  }\n"
         "}\n\n"
         "Scheduling Rules: \n"
         f"- The first activity must always start today ({today_str}).\n"
@@ -374,6 +448,11 @@ def _build_scope_prompt(rfp_text: str, kb_chunks: List[str], project=None, quest
         "- If the RFP or Knowledge Base text lacks detail, infer the missing pieces logically."
         "- Include all relevant roles and activities that ensure delivery of the project scope."
         "- Keep all field names exactly as in the schema.\n"
+        "- Generate a comprehensive project_summary with:\n"
+        "  * executive_summary: 2-3 paragraph high-level overview of the project, objectives, and expected outcomes\n"
+        "  * key_deliverables: List 5-7 concrete deliverables (e.g., 'Production-ready web application', 'API documentation', etc.)\n"
+        "  * success_criteria: List 3-5 measurable success metrics (e.g., '99.9% uptime', 'Response time < 200ms', etc.)\n"
+        "  * risks_and_mitigation: List 3-4 key risks with mitigation strategies (e.g., risk: 'Third-party API dependency', mitigation: 'Implement fallback mechanisms')\n"
         f"{user_context}"
         f"RFP / Project Files Content:\n{rfp_text}\n\n"
         f"Knowledge Base Context (for enrichment only):\n{kb_context}\n"
@@ -1285,7 +1364,16 @@ Create a comprehensive project plan with the following phases:
    Owner: DevOps Engineer
    Resources: Technical Lead, Backend Developer
 
-Generate activities with realistic start/end dates, proper role assignments, and meaningful descriptions.
+Project Summary:
+- Executive Summary: This project aims to develop a comprehensive web application using React and Node.js to streamline business operations. The solution will provide an intuitive user interface for data management, real-time analytics, and seamless integration with existing systems. Expected outcomes include improved operational efficiency, reduced manual errors, and enhanced user experience.
+
+- Key Deliverables: Production-ready web application, REST API with comprehensive documentation, PostgreSQL database with optimized schema, AWS cloud infrastructure setup, User documentation and training materials, Automated testing suite, Performance monitoring dashboard
+
+- Success Criteria: 99.5% application uptime, Page load time under 2 seconds, Support for 1000+ concurrent users, Zero critical security vulnerabilities, 95% user satisfaction score
+
+- Risks: Third-party API downtime (Mitigation: Implement caching and fallback mechanisms), Database performance bottlenecks (Mitigation: Implement proper indexing and query optimization), Resource availability constraints (Mitigation: Cross-train team members and maintain documentation)
+
+Generate activities with realistic start/end dates, proper role assignments, meaningful descriptions, and a comprehensive project summary.
 """
 
     kb_results = _rag_retrieve(rfp_text or fallback_text)

@@ -25,7 +25,7 @@ const DOMAIN_COMPLIANCE_MAP = {
 
 export default function ProjectForm({ onSubmit }) {
   const navigate = useNavigate();
-  const { createProject, createProjectWithScope, generateQuestions, generateRefinedScope, updateQuestions } = useProjects();
+  const { createProject, createProjectWithScope, generateQuestions, updateQuestions } = useProjects();
   const { companies, selectedCompany, setSelectedCompany, loadCompanies } = useRateCards();
 
   useEffect(() => {
@@ -115,7 +115,6 @@ export default function ProjectForm({ onSubmit }) {
   const [scopeLoading, setScopeLoading] = useState(false);
   const [questionLoading, setQuestionLoading] = useState(false);
   const [saveLoading, setSaveLoading] = useState(false);
-  const [refineLoading, setRefineLoading] = useState(false);
   const [validationErrors, setValidationErrors] = useState({});
   const [recommended, setRecommended] = useState([]);
   // 🔹 Questions state
@@ -742,49 +741,25 @@ export default function ProjectForm({ onSubmit }) {
             </table>
           </div>
 
-          {/*  Save Answers Button */}
-          <div className="mt-4 flex justify-end">
+          {/*  Save Answers & Generate Scope Buttons */}
+          <div className="mt-4 flex justify-end gap-3">
             <button
               type="button"
               onClick={handleSaveAnswers}
-              disabled={saveLoading}
-              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg shadow font-semibold transition disabled:opacity-50"
+              disabled={saveLoading || answersSaved}
+              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg shadow font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {saveLoading ? "Saving..." : " Save Answers"}
+              {saveLoading ? "Saving..." : answersSaved ? "✓ Saved" : "Save Changes"}
             </button>
-            <button
-              type="button"
-              onClick={async () => {
-                if (!projectId) {
-                  toast.error("Generate questions first!");
-                  return;
-                }
-                try {
-                  setRefineLoading(true);
-                  const formattedAnswers = {};
-                  for (const cat of questions) {
-                    formattedAnswers[cat.category] = {};
-                    for (const q of cat.items) {
-                      formattedAnswers[cat.category][q.question] = q.user_understanding || "";
-                    }
-                  }
 
-                  await generateRefinedScope(projectId, formattedAnswers);
-                  toast.success("Refined scope generated successfully!");
-                  navigate(`/exports/${projectId}`);
-                } catch (err) {
-                  console.error("Failed to generate refined scope:", err);
-                  toast.error("Failed to generate refined scope.");
-                } finally {
-                  setRefineLoading(false);
-                }
-              }}
-              disabled={refineLoading || !answersSaved}
-              className={`ml-3 flex items-center gap-2 ${
-                answersSaved ? "bg-green-600 hover:bg-green-700" : "bg-gray-400 cursor-not-allowed"
-              } text-white px-4 py-2 rounded-lg shadow font-semibold transition`}
+            <button
+              type="submit"
+              disabled={scopeLoading || !answersSaved}
+              className={`flex items-center justify-center gap-2 ${
+                answersSaved ? "bg-primary hover:bg-secondary" : "bg-gray-400 cursor-not-allowed"
+              } text-white px-4 py-2 rounded-lg shadow font-semibold transition disabled:opacity-50`}
             >
-              {refineLoading ? (
+              {scopeLoading ? (
                 <>
                   <svg
                     className="animate-spin h-5 w-5 mr-2 text-white"
@@ -806,52 +781,16 @@ export default function ProjectForm({ onSubmit }) {
                       d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
                     />
                   </svg>
-                  Generating Refined Scope...
+                  Generating Scope...
                 </>
               ) : (
-                "Generate Refined Scope"
+                "Generate Project Scope"
               )}
             </button>
 
           </div>
         </div>
       )}
-
-      
-      {/* Submit */}
-      <button
-        type="submit"
-        disabled={scopeLoading}
-        className="w-full flex items-center justify-center bg-primary hover:bg-secondary text-white px-4 py-2 rounded-lg shadow font-semibold transition disabled:opacity-50"
-      >
-        {scopeLoading ? (
-          <>
-            <svg
-              className="animate-spin h-5 w-5 mr-2 text-white"
-              xmlns="http://www.w3.org/2000/svg"
-              fill="none"
-              viewBox="0 0 24 24"
-            >
-              <circle
-                className="opacity-25"
-                cx="12"
-                cy="12"
-                r="10"
-                stroke="currentColor"
-                strokeWidth="4"
-              />
-              <path
-                className="opacity-75"
-                fill="currentColor"
-                d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
-              />
-            </svg>
-            Generating...
-          </>
-        ) : (
-          "Generate Project Scope"
-        )}
-      </button>
 
     </form>
   );

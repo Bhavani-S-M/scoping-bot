@@ -1,0 +1,38 @@
+ETL Pipeline Test Document
+
+This is a test document to verify the ETL pipeline is working correctly.
+
+Project Scoping Best Practices:
+
+1. Requirements Gathering
+- Conduct stakeholder interviews
+- Document functional requirements
+- Identify technical constraints
+- Define success criteria
+
+2. Technical Architecture
+- Design system architecture
+- Select appropriate technology stack
+- Plan for scalability and performance
+- Consider security requirements
+
+3. Resource Planning
+- Identify required roles and skills
+- Estimate effort for each phase
+- Allocate resources efficiently
+- Plan for contingencies
+
+4. Risk Management
+- Identify potential risks
+- Develop mitigation strategies
+- Plan for change management
+- Establish communication protocols
+
+5. Quality Assurance
+- Define testing strategy
+- Plan for user acceptance testing
+- Implement continuous integration
+- Monitor and measure quality metrics
+
+This document should be chunked into multiple pieces and vectorized in Qdrant.
+Each chunk should preserve context through overlapping text segments.

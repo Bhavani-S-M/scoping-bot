@@ -1,9 +1,13 @@
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Query
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Query, Depends, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from typing import List, Literal
 from app.utils import azure_blob
 from app.auth.router import fastapi_users
-import io, mimetypes
+from app.config.database import get_async_session
+from sqlalchemy.ext.asyncio import AsyncSession
+import io, mimetypes, logging
+
+logger = logging.getLogger(__name__)
 
 get_current_superuser = fastapi_users.current_user(active=True, superuser=True)
 
@@ -18,12 +22,25 @@ def _validate_base(base: str) -> str:
     return base
 
 
+async def _trigger_etl_scan(db: AsyncSession):
+    """Background task to trigger ETL scan after KB document upload."""
+    try:
+        from app.services.etl_pipeline import get_etl_pipeline
+        etl = get_etl_pipeline()
+        stats = await etl.scan_and_process_new_documents(db)
+        logger.info(f"✅ Post-upload ETL scan completed: {stats}")
+    except Exception as e:
+        logger.error(f"❌ Post-upload ETL scan failed: {e}")
+
+
 # Uploads
 @router.post("/upload/file")
 async def upload_file(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     folder: str = Form(""),
     base: Literal["projects", "knowledge_base"] = Form("knowledge_base"),
+    db: AsyncSession = Depends(get_async_session)
 ):
     try:
         base = _validate_base(base)
@@ -35,6 +52,11 @@ async def upload_file(
         data = await file.read()
         path = await azure_blob.upload_bytes(data, blob_name, base)
 
+        # If uploading to knowledge_base, trigger ETL scan in background
+        if base == "knowledge_base":
+            logger.info(f"📤 KB document uploaded: {path}, triggering ETL scan...")
+            background_tasks.add_task(_trigger_etl_scan, db)
+
         return {"status": "success", "blob": path}
     except Exception as e:
         raise HTTPException(500, f"Upload failed: {e}")
@@ -42,9 +64,11 @@ async def upload_file(
 
 @router.post("/upload/folder")
 async def upload_folder(
+    background_tasks: BackgroundTasks,
     files: List[UploadFile] = File(...),
     folder: str = Form(""),
     base: Literal["projects", "knowledge_base"] = Form("knowledge_base"),
+    db: AsyncSession = Depends(get_async_session)
 ):
     try:
         base = _validate_base(base)
@@ -59,6 +83,11 @@ async def upload_folder(
             data = await file.read()
             path = await azure_blob.upload_bytes(data, blob_name, base)
             uploaded.append(path)
+
+        # If uploading to knowledge_base, trigger ETL scan in background
+        if base == "knowledge_base":
+            logger.info(f"📤 {len(uploaded)} KB documents uploaded, triggering ETL scan...")
+            background_tasks.add_task(_trigger_etl_scan, db)
 
         return {"status": "success", "files": uploaded}
     except Exception as e:
