@@ -40,7 +40,7 @@ read -p "Email: " EMAIL
 read -s -p "Password: " PASSWORD
 echo ""
 
-LOGIN_RESPONSE=$(curl -s -X POST "$BACKEND_URL/auth/login" \
+LOGIN_RESPONSE=$(curl -s -X POST "$BACKEND_URL/auth/jwt/login" \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "username=$EMAIL&password=$PASSWORD")
 
