@@ -371,12 +371,14 @@ class ETLPipeline:
         files = []
 
         def traverse(node, path=""):
-            if node.get("type") == "file":
+            # Check if this is a file (not a folder)
+            if node.get("is_folder") is False:
                 files.append({
                     "name": node["name"],
                     "path": node.get("path", f"{path}/{node['name']}".lstrip("/"))
                 })
-            elif node.get("children"):
+            # If it has children (is a folder), traverse them
+            if node.get("children"):
                 for child in node["children"]:
                     child_path = f"{path}/{node['name']}".lstrip("/") if node.get("name") else path
                     traverse(child, child_path)
