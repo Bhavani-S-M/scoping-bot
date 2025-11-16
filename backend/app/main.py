@@ -10,6 +10,12 @@ from app.routers import projects, exports, blob, ratecards, project_prompts, etl
 from app.utils import azure_blob
 from app.services.etl_pipeline import get_etl_pipeline
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(levelname)s: %(message)s'
+)
+
 logger = logging.getLogger(__name__)
 
 # ---------- App Init ----------
