@@ -25,13 +25,17 @@ import { toast } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
 import JSZip from "jszip";
 import { saveAs } from "file-saver";
+import ScopePreviewTabs from "../components/ScopePreviewTabs";
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerSrc;
 
 const TABS = [
-  { key: "json", label: "JSON", icon: FileJson },
-  { key: "excel", label: "Excel", icon: FileSpreadsheet },
-  { key: "pdf", label: "PDF", icon: FileText },
+  { key: "overview", label: "Project Overview", icon: FileText },
+  { key: "architecture", label: "Architecture Diagram", icon: FileText },
+  { key: "solution", label: "Solution Components", icon: FileText },
+  { key: "assumptions", label: "Assumptions", icon: FileText },
+  { key: "timeline", label: "Timeline", icon: FileText },
+  { key: "costing", label: "Costing", icon: FileText },
 ];
 
 const formatCurrency = (v, currency = "USD") => {
@@ -43,6 +47,64 @@ const formatCurrency = (v, currency = "USD") => {
     currency,
     minimumFractionDigits: 2,
   });
+};
+
+// Helper function to render section content
+const renderSectionContent = (section, data) => {
+  if (!data) {
+    return (
+      <div className="text-center text-gray-500 py-8">
+        No data available for this section
+      </div>
+    );
+  }
+
+  const renderObject = (obj, title = "") => {
+    if (!obj || typeof obj !== 'object') return null;
+
+    return (
+      <div className="space-y-4">
+        {title && <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-200">{title}</h3>}
+        {Object.entries(obj).map(([key, value]) => {
+          if (value === null || value === undefined) return null;
+
+          if (Array.isArray(value)) {
+            return (
+              <div key={key} className="mb-4">
+                <h4 className="font-medium text-gray-700 dark:text-gray-300 mb-2">{key.replace(/_/g, ' ')}</h4>
+                <ul className="list-disc list-inside space-y-1 ml-4">
+                  {value.map((item, idx) => (
+                    <li key={idx} className="text-gray-600 dark:text-gray-400">
+                      {typeof item === 'object' ? JSON.stringify(item) : item}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            );
+          } else if (typeof value === 'object') {
+            return (
+              <div key={key} className="mb-4 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
+                {renderObject(value, key.replace(/_/g, ' '))}
+              </div>
+            );
+          } else {
+            return (
+              <div key={key} className="mb-2">
+                <span className="font-medium text-gray-700 dark:text-gray-300">{key.replace(/_/g, ' ')}: </span>
+                <span className="text-gray-600 dark:text-gray-400">{value}</span>
+              </div>
+            );
+          }
+        })}
+      </div>
+    );
+  };
+
+  return (
+    <div className="p-6 bg-white dark:bg-dark-card rounded-lg border border-gray-200 dark:border-gray-700">
+      {renderObject(data)}
+    </div>
+  );
 };
 
 export default function Exports() {
@@ -68,7 +130,7 @@ export default function Exports() {
   }, [jsonText]);
 
   const [project, setProject] = useState(null);
-  const [activeTab, setActiveTab] = useState("json");
+  const [activeTab, setActiveTab] = useState("overview");
   const activeCurrency = useMemo(() => {
     return (
       project?.company?.currency ||
@@ -727,311 +789,8 @@ export default function Exports() {
         ))}
       </div>
       
-      {/* JSON */}
-      {activeTab === "json" && (
-        <div>
-          <textarea
-            value={jsonText}
-            onChange={(e) => setJsonText(e.target.value)}
-            className="w-full h-96 font-mono text-sm p-3 rounded-md border"
-            spellCheck={false}
-          />
-          {parseError ? (
-            <p className="text-red-600 text-sm mt-2">JSON error: {parseError}</p>
-          ) : (
-            <p className="text-emerald-600 text-sm mt-2">JSON looks valid.</p>
-          )}
-          <div className="mt-4 flex gap-3 flex-wrap items-center">
-
-
-            {isFinalized && (
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={handleDownloadJson}
-                  disabled={downloadState.json.loading}
-                  className="px-4 py-2 rounded-lg bg-primary text-white inline-flex items-center gap-2"
-                >
-                  {downloadState.json.loading ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" /> JSON
-                    </>
-                  ) : (
-                    <>
-                      <Download className="w-4 h-4" /> Download JSON
-                    </>
-                  )}
-                </button>
-                {downloadState.json.loading && (
-                  <>
-                    <ProgressBar percent={downloadState.json.progress} />
-                    <button
-                      onClick={() => downloadState.json.controller?.abort()}
-                      className="px-3 py-2 bg-red-500 text-white rounded-lg flex items-center gap-1"
-                    >
-                      <XCircle className="w-4 h-4" /> Cancel
-                    </button>
-                  </>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-            {/* Excel */}
-      {activeTab === "excel" && (
-        <div className="space-y-4">
-          {parsedDraft && (
-            <div>
-              <label className="block text-sm mb-1 text-gray-600">
-                Select Section:
-              </label>
-              <select
-                value={excelSection}
-                onChange={(e) => setExcelSection(e.target.value)}
-                className="border rounded-md px-3 py-2 text-sm"
-              >
-                {/* Only show valid scope sections with user-friendly labels */}
-                {Object.keys(parsedDraft)
-                  .filter((k) => k === "overview" || k === "activities" || k === "resourcing_plan")
-                  .map((k) => (
-                    <option key={k} value={k}>
-                      {k === "resourcing_plan" ? "Resources Plan" : k === "activities" ? "Activities" : "Overview"}
-                    </option>
-                  ))}
-              </select>
-            </div>
-          )}
-
-          {/* Notice about saving edits */}
-          {excelSection && excelPreview.headers.length > 0 && (
-            <div className="mt-2 p-3 bg-amber-50 border border-amber-200 rounded-lg flex items-start gap-2">
-              <span className="text-amber-600 text-lg">ℹ️</span>
-              <div className="text-sm text-amber-800">
-                <strong>Editing Note:</strong> Changes made to this table are temporary and will be lost when you refresh.
-                To make permanent changes, use the chat box below to request modifications (e.g., "change Data Engineer rate to $3000", "increase Backend Developer effort by 2 months").
-              </div>
-            </div>
-          )}
-
-          {excelPreview.headers.length ? (
-            <div className="overflow-x-auto max-h-[500px] border border-gray-200 rounded-lg shadow">
-              <table className="min-w-full text-sm border-collapse">
-                <thead className="bg-emerald-50 sticky top-0 z-10">
-                  <tr>
-                    {excelPreview.headers.map((h) => (
-                      <th
-                        key={h}
-                        className="px-3 py-2 border text-left text-xs font-semibold text-gray-700 whitespace-nowrap"
-                      >
-                        {h}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {excelPreview.rows.map((row, i) => {
-                    const isTotal = row[0] === "Total";
-                    return (
-                      <tr
-                        key={i}
-                        className={`border-t ${
-                          isTotal
-                            ? "bg-green-100 font-bold text-green-800"
-                            : i % 2 === 0
-                            ? "bg-white"
-                            : "bg-gray-50"
-                        } hover:bg-emerald-50 transition`}
-                      >
-
-                        {row.map((cell, j) => {
-                          const header = excelPreview.headers[j]?.toLowerCase();
-                          let statusColor = "";
-                          if (!isTotal && header === "status") {
-                            const val = String(cell || "").toLowerCase();
-                            if (val.includes("complete"))
-                              statusColor = "bg-green-100 text-green-800";
-                            else if (val.includes("progress") || val.includes("ongoing"))
-                              statusColor = "bg-yellow-100 text-yellow-800";
-                            else statusColor = "bg-gray-100 text-gray-600";
-                          }
-
-                          return (
-                            <td key={j} className={`px-3 py-2 border ${statusColor}`}>
-                              {isTotal ? (
-                                cell
-                              ) : (
-                                <input
-                                  type="text"
-                                  value={cell}
-                                  onChange={(e) => {
-                                    const newRows = [...excelPreview.rows];
-                                    newRows[i][j] = e.target.value;
-                                    setExcelPreview({ ...excelPreview, rows: newRows });
-                                    updateParsedDraft(excelSection, newRows);
-                                  }}
-                                  className="w-full bg-transparent border-none focus:ring-0 text-sm px-1 py-0.5 h-4"
-
-                                />
-                              )}
-                            </td>
-
-                          );
-                        })}
-                        <td className="px-2 py-1 border">
-                        {!isTotal && (
-                          <button
-                            onClick={() => {
-                              const newRows = excelPreview.rows.filter((_, idx) => idx !== i);
-                              setExcelPreview({ ...excelPreview, rows: newRows });
-                              updateParsedDraft(excelSection, newRows);
-                            }}
-                            className="text-red-500 text-sm"
-                          >
-                            <Trash2 className="w-4 h-4 inline" />
-                          </button>
-                        )}
-                      </td>
-
-                      </tr>
-                      
-                      
-                    );
-                  })}
-                </tbody>
-              </table>
-              <div className="flex gap-2 mt-2">
-                <button
-                  onClick={() => {
-                    const emptyRow = excelPreview.headers.map(() => "");
-                    const newRows = [...excelPreview.rows, emptyRow];
-                    setExcelPreview({ ...excelPreview, rows: newRows });
-                    updateParsedDraft(excelSection, newRows);
-                  }}
-                  className="px-3 py-1 bg-emerald-600 text-white rounded"
-                >
-                  Add New
-                </button>
-              </div>
-
-            </div>
-          ) : (
-            <p className="text-gray-500 text-sm">No table data available.</p>
-          )}
-
-          {isFinalized && (
-            <div className="flex items-center gap-2">
-              <button
-                onClick={handleDownloadExcel}
-                disabled={downloadState.excel.loading}
-                className="px-4 py-2 rounded-lg bg-primary text-white inline-flex items-center gap-2"
-              >
-                {downloadState.excel.loading ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" /> Excel
-                  </>
-                ) : (
-                  <>
-                    <Download className="w-4 h-4" /> Download Excel
-                  </>
-                )}
-              </button>
-              {downloadState.excel.loading && (
-                <>
-                  <ProgressBar percent={downloadState.excel.progress} />
-                  <button
-                    onClick={() => downloadState.excel.controller?.abort()}
-                    className="px-3 py-2 bg-red-500 text-white rounded-lg flex items-center gap-1"
-                  >
-                    <XCircle className="w-4 h-4" /> Cancel
-                  </button>
-                </>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* PDF */}
-      {activeTab === "pdf" && (
-        <div className="space-y-4">
-          {previewPdfUrl ? (
-            <div className="flex justify-center w-full">
-              <div className="w-full max-w-6xl border rounded-lg overflow-hidden shadow max-h-[600px] overflow-y-auto bg-white dark:bg-dark-surface">
-                <Document
-                  file={previewPdfUrl}
-                  onLoadSuccess={({ numPages }) => setNumPages(numPages)}
-                  loading={
-                    <div className="flex flex-col items-center justify-center h-[400px] text-gray-600 dark:text-gray-300">
-                      <Loader2 className="w-8 h-8 animate-spin text-emerald-600 mb-3" />
-                      <p className="text-sm font-medium">Loading PDF preview…</p>
-                    </div>
-                  }
-                  error={
-                    <div className="text-center text-red-500 p-4">
-                      <p>Failed to load PDF preview. Please try again.</p>
-                    </div>
-                  }
-                  className="flex flex-col items-center"
-                >
-                  {Array.from({ length: numPages || 0 }, (_, i) => (
-                    <Page
-                      key={i}
-                      pageNumber={i + 1}
-                      renderTextLayer={false}
-                      renderAnnotationLayer={false}
-                      width={1000} 
-                      className="mx-auto my-2"
-                    />
-                  ))}
-                </Document>
-              </div>
-            </div>
-          ) : (
-            <div className="flex flex-col items-center justify-center h-[400px] text-gray-600 dark:text-gray-300">
-              <Loader2 className="w-8 h-8 animate-spin text-primary mb-3" />
-              <p className="text-sm font-medium">
-                {isFinalized
-                  ? "Loading final PDF from blob storage…"
-                  : "Generating draft PDF preview…"}
-              </p>
-            </div>
-          )}
-
-
-
-          {isFinalized && (
-            <div className="flex items-center gap-2">
-              <button
-                onClick={handleDownloadPdf}
-                disabled={downloadState.pdf.loading}
-                className="px-4 py-2 rounded-lg bg-primary text-white inline-flex items-center gap-2"
-              >
-                {downloadState.pdf.loading ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" /> PDF
-                  </>
-                ) : (
-                  <>
-                    <Download className="w-4 h-4" /> Download PDF
-                  </>
-                )}
-              </button>
-              {downloadState.pdf.loading && (
-                <>
-                  <ProgressBar percent={downloadState.pdf.progress} />
-                  <button
-                    onClick={() => downloadState.pdf.controller?.abort()}
-                    className="px-3 py-2 bg-red-500 text-white rounded-lg flex items-center gap-1"
-                  >
-                    <XCircle className="w-4 h-4" /> Cancel
-                  </button>
-                </>
-              )}
-            </div>
-          )}
-        </div>
-      )}
+      {/* Section Preview Tabs */}
+      <ScopePreviewTabs activeTab={activeTab} parsedDraft={parsedDraft} />
 
       {/*  Finalize + Download All Section (Always visible at bottom) */}
       <div className="pt-6 flex items-center gap-3 flex-wrap">

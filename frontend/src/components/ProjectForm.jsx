@@ -3,8 +3,9 @@ import { useNavigate } from "react-router-dom";
 import { useProjects } from "../contexts/ProjectContext";
 import { useRateCards } from "../contexts/RateCardContext";
 
-import { File, Trash2, Upload } from "lucide-react";
+import { File, Trash2, Upload, Download } from "lucide-react";
 import { toast } from "react-toastify";
+import * as XLSX from 'xlsx';
 
 const DOMAIN_COMPLIANCE_MAP = {
   fintech: ["RBI-KYC-AML","NPCI-UPI","UIDAI-Aadhaar","DPDP-2023","CERT-In-2022","IT-Rules-2021","PCI-DSS","ISO-27001","SOC-2"],
@@ -122,6 +123,7 @@ export default function ProjectForm({ onSubmit }) {
   const [showQuestions, setShowQuestions] = useState(false);
   const [projectId, setProjectId] = useState(null);
   const [answersSaved, setAnswersSaved] = useState(false);
+  const [downloadingQuestions, setDownloadingQuestions] = useState(false);
 
 
 
@@ -327,7 +329,7 @@ export default function ProjectForm({ onSubmit }) {
       for (const cat of questions) {
         formattedAnswers[cat.category] = {};
         for (const q of cat.items) {
-          formattedAnswers[cat.category][q.question] = q.user_understanding || "";
+          formattedAnswers[cat.category][q.question] = q.client_response || q.user_understanding || "";
         }
       }
 
@@ -343,7 +345,110 @@ export default function ProjectForm({ onSubmit }) {
     }
   };
 
+  const handleDownloadQuestions = async () => {
+    try {
+      setDownloadingQuestions(true);
 
+      // Prepare data for Excel
+      const excelData = [];
+      for (const cat of questions) {
+        for (const q of cat.items) {
+          excelData.push({
+            'Category': cat.category,
+            'Question': q.question,
+            'Client Response': q.client_response || q.user_understanding || "",
+            'Comment': q.comment || ""
+          });
+        }
+      }
+
+      // Create worksheet
+      const ws = XLSX.utils.json_to_sheet(excelData);
+
+      // Set column widths
+      ws['!cols'] = [
+        { wch: 20 },  // Category
+        { wch: 50 },  // Question
+        { wch: 40 },  // Client Response
+        { wch: 30 }   // Comment
+      ];
+
+      // Create workbook
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "RFP Questions");
+
+      // Download
+      const fileName = `${form.name || 'project'}_rfp_questions.xlsx`;
+      XLSX.writeFile(wb, fileName);
+
+      toast.success("Questions downloaded successfully!");
+    } catch (err) {
+      console.error("Download questions failed:", err);
+      toast.error("Failed to download questions.");
+    } finally {
+      setDownloadingQuestions(false);
+    }
+  };
+
+  const handleUploadClientResponses = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    try {
+      const fileExtension = file.name.split('.').pop().toLowerCase();
+
+      if (fileExtension === 'xlsx' || fileExtension === 'xls') {
+        // Handle Excel file
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          try {
+            const data = new Uint8Array(event.target.result);
+            const workbook = XLSX.read(data, { type: 'array' });
+            const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+            const jsonData = XLSX.utils.sheet_to_json(firstSheet);
+
+            // Map responses back to questions
+            const updatedQuestions = questions.map(cat => ({
+              ...cat,
+              items: cat.items.map(q => {
+                const match = jsonData.find(row =>
+                  row.Category === cat.category && row.Question === q.question
+                );
+                if (match) {
+                  return {
+                    ...q,
+                    client_response: match['Client Response'] || "",
+                    comment: match['Comment'] || q.comment
+                  };
+                }
+                return q;
+              })
+            }));
+
+            setQuestions(updatedQuestions);
+            setAnswersSaved(false); // Mark as unsaved to allow saving
+            toast.success("Client responses imported successfully!");
+          } catch (err) {
+            console.error("Error parsing Excel:", err);
+            toast.error("Failed to parse Excel file.");
+          }
+        };
+        reader.readAsArrayBuffer(file);
+
+      } else if (fileExtension === 'pdf') {
+        toast.info("PDF parsing coming soon! For now, please use Excel format.");
+      } else {
+        toast.error("Please upload an Excel (.xlsx) or PDF file.");
+      }
+
+      // Reset file input
+      e.target.value = null;
+
+    } catch (err) {
+      console.error("Upload failed:", err);
+      toast.error("Failed to upload file.");
+    }
+  };
 
 
   return (
@@ -684,62 +789,99 @@ export default function ProjectForm({ onSubmit }) {
 
 
 
-      {/* Editable Questions Table */}
+      {/* RFP Questions Section */}
       {showQuestions && questions.length > 0 && (
         <div className="mt-10">
-          <h2 className="text-xl font-semibold mb-4"> Questions from RFP</h2>
+          <h2 className="text-xl font-semibold mb-4">RFP Questions</h2>
 
-          <div className="overflow-x-auto border rounded-lg">
-            <table className="min-w-full text-sm">
-              <thead className="bg-gray-100">
-                <tr>
-                  <th className="p-2 text-left">Category</th>
-                  <th className="p-2 text-left">Question</th>
-                  <th className="p-2 text-left">User Understanding</th>
-                  <th className="p-2 text-left">Comment</th>
-                </tr>
-              </thead>
-              <tbody>
-                {questions.map((cat, ci) =>
-                  cat.items.map((q, qi) => (
-                    <tr key={`${ci}-${qi}`} className="border-t hover:bg-gray-50">
-                      {qi === 0 && (
-                        <td
-                          rowSpan={cat.items.length}
-                          className="p-2 font-semibold align-top bg-gray-50"
-                        >
-                          {cat.category}
-                        </td>
-                      )}
-                      <td className="p-2">{q.question}</td>
-                      <td className="p-2">
-                        <input
-                          type="text"
-                          value={q.user_understanding || ""}
-                          onChange={(e) =>
-                            handleQuestionChange(ci, qi, "user_understanding", e.target.value)
-                          }
-                          className="border px-2 py-1 rounded w-full"
-                          placeholder="Enter your understanding..."
-                        />
-                      </td>
-                      <td className="p-2">
-                        <input
-                          type="text"
-                          value={q.comment || ""}
-                          onChange={(e) =>
-                            handleQuestionChange(ci, qi, "comment", e.target.value)
-                          }
-                          className="border px-2 py-1 rounded w-full"
-                          placeholder="Add comment..."
-                        />
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+          {/* Message Block with Download and Upload */}
+          <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-6 mb-6">
+            <p className="text-gray-700 dark:text-gray-300 mb-4">
+              These are the default RFP questions. Share this file with the client so they can fill in their responses.
+            </p>
+
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={handleDownloadQuestions}
+                disabled={downloadingQuestions}
+                className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg shadow font-semibold transition disabled:opacity-50"
+              >
+                <Download className="w-4 h-4" />
+                {downloadingQuestions ? "Downloading..." : "Download Questions (Excel)"}
+              </button>
+
+              <label className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg shadow font-semibold transition cursor-pointer">
+                <Upload className="w-4 h-4" />
+                Upload Client Responses
+                <input
+                  type="file"
+                  accept=".xlsx,.xls,.pdf"
+                  onChange={handleUploadClientResponses}
+                  className="hidden"
+                />
+              </label>
+            </div>
           </div>
+
+          {/* Collapsible Questions Table (for internal review/editing) */}
+          <details className="mb-4">
+            <summary className="cursor-pointer text-sm text-gray-600 dark:text-gray-400 hover:text-primary mb-2">
+              Click to view/edit questions
+            </summary>
+
+            <div className="overflow-x-auto border rounded-lg">
+              <table className="min-w-full text-sm">
+                <thead className="bg-gray-100 dark:bg-gray-800">
+                  <tr>
+                    <th className="p-2 text-left">Category</th>
+                    <th className="p-2 text-left">Question</th>
+                    <th className="p-2 text-left">Client Response</th>
+                    <th className="p-2 text-left">Comment</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {questions.map((cat, ci) =>
+                    cat.items.map((q, qi) => (
+                      <tr key={`${ci}-${qi}`} className="border-t hover:bg-gray-50 dark:hover:bg-gray-800">
+                        {qi === 0 && (
+                          <td
+                            rowSpan={cat.items.length}
+                            className="p-2 font-semibold align-top bg-gray-50 dark:bg-gray-800"
+                          >
+                            {cat.category}
+                          </td>
+                        )}
+                        <td className="p-2">{q.question}</td>
+                        <td className="p-2">
+                          <input
+                            type="text"
+                            value={q.client_response || q.user_understanding || ""}
+                            onChange={(e) =>
+                              handleQuestionChange(ci, qi, "client_response", e.target.value)
+                            }
+                            className="border px-2 py-1 rounded w-full dark:bg-gray-700 dark:border-gray-600"
+                            placeholder="Enter client response..."
+                          />
+                        </td>
+                        <td className="p-2">
+                          <input
+                            type="text"
+                            value={q.comment || ""}
+                            onChange={(e) =>
+                              handleQuestionChange(ci, qi, "comment", e.target.value)
+                            }
+                            className="border px-2 py-1 rounded w-full dark:bg-gray-700 dark:border-gray-600"
+                            placeholder="Add comment..."
+                          />
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </details>
 
           {/*  Save Answers & Generate Scope Buttons */}
           <div className="mt-4 flex justify-end gap-3">
