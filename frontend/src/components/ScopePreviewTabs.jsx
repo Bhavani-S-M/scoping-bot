@@ -90,20 +90,20 @@ const ScopePreviewTabs = ({ activeTab, parsedDraft }) => {
       case 'overview':
         sectionData = parsedDraft.overview || parsedDraft.project_overview || parsedDraft.Overview || parsedDraft['Project Overview'];
         break;
+      case 'activities':
+        sectionData = parsedDraft.activities || parsedDraft.activities_breakdown || parsedDraft['Activities Breakdown'] || parsedDraft.Activities;
+        break;
+      case 'resourcing':
+        sectionData = parsedDraft.resourcing || parsedDraft.resourcing_plan || parsedDraft['Resourcing Plan'] || parsedDraft.Resourcing;
+        break;
       case 'architecture':
-        sectionData = parsedDraft.architecture || parsedDraft.architecture_diagram || parsedDraft.Architecture || parsedDraft['Architecture Diagram'];
-        break;
-      case 'solution':
-        sectionData = parsedDraft.solution_components || parsedDraft.solution || parsedDraft.technical_solution || parsedDraft.Solution || parsedDraft['Solution Components'];
-        break;
-      case 'assumptions':
-        sectionData = parsedDraft.assumptions || parsedDraft.key_assumptions || parsedDraft.Assumptions;
-        break;
-      case 'timeline':
-        sectionData = parsedDraft.timeline || parsedDraft.project_timeline || parsedDraft.delivery_timeline || parsedDraft.Timeline;
+        sectionData = parsedDraft.architecture || parsedDraft.architecture_diagram || parsedDraft.Architecture || parsedDraft['Architecture Diagram'] || parsedDraft['Architecture diagram'];
         break;
       case 'costing':
-        sectionData = parsedDraft.costing || parsedDraft.cost_breakdown || parsedDraft.pricing || parsedDraft.Costing || parsedDraft['Cost Breakdown'];
+        sectionData = parsedDraft.costing || parsedDraft.cost_projection || parsedDraft['Cost Projection'] || parsedDraft.cost_breakdown || parsedDraft.pricing || parsedDraft.Costing;
+        break;
+      case 'summary':
+        sectionData = parsedDraft.summary || parsedDraft.project_summary || parsedDraft.Summary || parsedDraft.Summery || parsedDraft['Project Summary'];
         break;
       default:
         sectionData = null;
