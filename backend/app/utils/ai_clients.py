@@ -67,7 +67,7 @@ def embed_text_ollama(texts: List[str]) -> List[List[float]]:
 
     for attempt in range(2):  # Retry once
         try:
-            resp = requests.post(url, json=payload, timeout=30)
+            resp = requests.post(url, json=payload, timeout=120)
             resp.raise_for_status()
             data = resp.json()
 
