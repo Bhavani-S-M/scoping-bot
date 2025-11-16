@@ -22,13 +22,17 @@ def _validate_base(base: str) -> str:
     return base
 
 
-async def _trigger_etl_scan(db: AsyncSession):
+async def _trigger_etl_scan():
     """Background task to trigger ETL scan after KB document upload."""
     try:
         from app.services.etl_pipeline import get_etl_pipeline
-        etl = get_etl_pipeline()
-        stats = await etl.scan_and_process_new_documents(db)
-        logger.info(f"✅ Post-upload ETL scan completed: {stats}")
+        from app.config.database import AsyncSessionLocal
+
+        # Create a new database session for the background task
+        async with AsyncSessionLocal() as db:
+            etl = get_etl_pipeline()
+            stats = await etl.scan_and_process_new_documents(db)
+            logger.info(f"✅ Post-upload ETL scan completed: {stats}")
     except Exception as e:
         logger.error(f"❌ Post-upload ETL scan failed: {e}")
 
@@ -55,7 +59,7 @@ async def upload_file(
         # If uploading to knowledge_base, trigger ETL scan in background
         if base == "knowledge_base":
             logger.info(f"📤 KB document uploaded: {path}, triggering ETL scan...")
-            background_tasks.add_task(_trigger_etl_scan, db)
+            background_tasks.add_task(_trigger_etl_scan)
 
         return {"status": "success", "blob": path}
     except Exception as e:
@@ -87,7 +91,7 @@ async def upload_folder(
         # If uploading to knowledge_base, trigger ETL scan in background
         if base == "knowledge_base":
             logger.info(f"📤 {len(uploaded)} KB documents uploaded, triggering ETL scan...")
-            background_tasks.add_task(_trigger_etl_scan, db)
+            background_tasks.add_task(_trigger_etl_scan)
 
         return {"status": "success", "files": uploaded}
     except Exception as e:

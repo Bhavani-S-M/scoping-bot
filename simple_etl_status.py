@@ -78,7 +78,7 @@ def check_etl_status(token):
         print(f"   Total documents: {stats['stats']['total_documents']}")
         print(f"   Vectorized: {stats['stats']['vectorized_documents']}")
         print(f"   Pending approval: {stats['stats']['pending_approvals']}")
-        print(f"   Failed processing: {stats['stats']['failed_documents']}")
+        print(f"   Failed jobs: {stats['stats']['processing_jobs'].get('failed', 0)}")
 
         if stats['stats']['total_documents'] == 0:
             print("\n⚠️  No documents found in knowledge base!")
