@@ -12,28 +12,44 @@ const ScopePreviewTabs = ({ activeTab, parsedDraft }) => {
     );
   }
 
-  const renderValue = (value) => {
-    if (value === null || value === undefined) return null;
+  // Debug: Log the structure
+  console.log('ScopePreviewTabs - activeTab:', activeTab);
+  console.log('ScopePreviewTabs - parsedDraft keys:', Object.keys(parsedDraft));
+  console.log('ScopePreviewTabs - parsedDraft:', parsedDraft);
+
+  const renderValue = (value, depth = 0) => {
+    if (value === null || value === undefined || value === '') return null;
+
+    // Prevent infinite recursion
+    if (depth > 5) {
+      return <span className="text-gray-500 italic">...</span>;
+    }
 
     if (Array.isArray(value)) {
+      if (value.length === 0) return <span className="text-gray-500 italic">None</span>;
       return (
         <ul className="list-disc list-inside space-y-1 ml-4">
           {value.map((item, idx) => (
             <li key={idx} className="text-gray-600 dark:text-gray-400">
-              {typeof item === 'object' ? JSON.stringify(item, null, 2) : String(item)}
+              {typeof item === 'object' ? renderValue(item, depth + 1) : String(item)}
             </li>
           ))}
         </ul>
       );
     } else if (typeof value === 'object') {
       return (
-        <div className="ml-4 mt-2 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
-          {Object.entries(value).map(([k, v]) => (
-            <div key={k} className="mb-2">
-              <span className="font-medium text-gray-700 dark:text-gray-300">{k.replace(/_/g, ' ')}: </span>
-              {renderValue(v)}
-            </div>
-          ))}
+        <div className="ml-4 mt-2 space-y-2">
+          {Object.entries(value).map(([k, v]) => {
+            if (v === null || v === undefined || v === '') return null;
+            return (
+              <div key={k} className="flex gap-2">
+                <span className="font-medium text-gray-700 dark:text-gray-300 min-w-[150px]">
+                  {k.replace(/_/g, ' ')}:
+                </span>
+                <div className="flex-1">{renderValue(v, depth + 1)}</div>
+              </div>
+            );
+          })}
         </div>
       );
     } else {
@@ -47,16 +63,18 @@ const ScopePreviewTabs = ({ activeTab, parsedDraft }) => {
     }
 
     return (
-      <div className="space-y-4">
+      <div className="space-y-6">
         {Object.entries(data).map(([key, value]) => {
-          if (value === null || value === undefined) return null;
+          if (value === null || value === undefined || value === '') return null;
 
           return (
-            <div key={key} className="mb-4">
-              <h4 className="font-semibold text-gray-800 dark:text-gray-200 mb-2">
+            <div key={key} className="border-b border-gray-200 dark:border-gray-700 pb-4 last:border-0">
+              <h4 className="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-3">
                 {key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
               </h4>
-              {renderValue(value)}
+              <div className="ml-4">
+                {renderValue(value)}
+              </div>
             </div>
           );
         })}
@@ -65,22 +83,42 @@ const ScopePreviewTabs = ({ activeTab, parsedDraft }) => {
   };
 
   const getSectionData = () => {
+    // First, try to get section-specific data
+    let sectionData = null;
+
     switch (activeTab) {
       case 'overview':
-        return parsedDraft.overview || parsedDraft.project_overview;
+        sectionData = parsedDraft.overview || parsedDraft.project_overview || parsedDraft.Overview || parsedDraft['Project Overview'];
+        break;
       case 'architecture':
-        return parsedDraft.architecture || parsedDraft.architecture_diagram;
+        sectionData = parsedDraft.architecture || parsedDraft.architecture_diagram || parsedDraft.Architecture || parsedDraft['Architecture Diagram'];
+        break;
       case 'solution':
-        return parsedDraft.solution_components || parsedDraft.solution || parsedDraft.technical_solution;
+        sectionData = parsedDraft.solution_components || parsedDraft.solution || parsedDraft.technical_solution || parsedDraft.Solution || parsedDraft['Solution Components'];
+        break;
       case 'assumptions':
-        return parsedDraft.assumptions || parsedDraft.key_assumptions;
+        sectionData = parsedDraft.assumptions || parsedDraft.key_assumptions || parsedDraft.Assumptions;
+        break;
       case 'timeline':
-        return parsedDraft.timeline || parsedDraft.project_timeline || parsedDraft.delivery_timeline;
+        sectionData = parsedDraft.timeline || parsedDraft.project_timeline || parsedDraft.delivery_timeline || parsedDraft.Timeline;
+        break;
       case 'costing':
-        return parsedDraft.costing || parsedDraft.cost_breakdown || parsedDraft.pricing;
+        sectionData = parsedDraft.costing || parsedDraft.cost_breakdown || parsedDraft.pricing || parsedDraft.Costing || parsedDraft['Cost Breakdown'];
+        break;
       default:
-        return null;
+        sectionData = null;
     }
+
+    console.log('ScopePreviewTabs - sectionData for', activeTab, ':', sectionData);
+
+    // If no section-specific data, check if parsedDraft itself might be the section
+    // (This handles cases where the scope is flat rather than nested)
+    if (!sectionData && activeTab === 'overview') {
+      // For overview, show the whole parsedDraft if no specific overview section exists
+      sectionData = parsedDraft;
+    }
+
+    return sectionData;
   };
 
   const sectionData = getSectionData();
@@ -89,7 +127,8 @@ const ScopePreviewTabs = ({ activeTab, parsedDraft }) => {
     <div className="p-6 bg-white dark:bg-dark-card rounded-lg border border-gray-200 dark:border-gray-700 max-h-[600px] overflow-y-auto">
       {sectionData ? renderSection(sectionData) : (
         <div className="text-center text-gray-500 italic py-8">
-          This section has no data in the current scope
+          <p>This section has no data in the current scope</p>
+          <p className="text-sm mt-2">Available fields: {Object.keys(parsedDraft).join(', ')}</p>
         </div>
       )}
     </div>
