@@ -1881,10 +1881,10 @@ Generate activities with realistic start/end dates, proper role assignments, and
                 logger.warning(f" Failed to update project metadata: {e}")
 
 
-        # Step 2: Generate + store architecture diagram (using Eraser.io or Graphviz fallback)
+        # Step 2: Generate + store architecture diagram
         try:
             blob_base_path = f"{PROJECTS_BASE}/{getattr(project, 'id', 'unknown')}"
-            db_file, arch_blob = await generate_architecture_eraser(
+            db_file, arch_blob = await generate_architecture(
                 db, project, rfp_text, kb_chunks, blob_base_path
             )
             cleaned_scope["architecture_diagram"] = arch_blob or None
