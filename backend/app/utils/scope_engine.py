@@ -352,6 +352,11 @@ def _build_scope_prompt(rfp_text: str, kb_chunks: List[str], project=None, quest
         "  ],\n"
         '  "resourcing_plan": []\n'
         "}\n\n"
+        "**CRITICAL: Output ONLY the schema above. Do NOT add:**\n"
+        "- ❌ \"cost_projection\" field (this will be auto-generated from resourcing_plan)\n"
+        "- ❌ \"project_summary\" field (this will be auto-generated)\n"
+        "- ❌ Any other fields not listed in the schema above\n"
+        "- ❌ No markdown, no commentary, no explanations — ONLY valid JSON matching the schema\n\n"
         "Scheduling Rules: \n"
         f"- The first activity must always start today ({today_str}).\n"
         "- If two activities are **independent**, overlap their timelines by **70–80%** of their duration (not full overlap)."
@@ -361,7 +366,7 @@ def _build_scope_prompt(rfp_text: str, kb_chunks: List[str], project=None, quest
         "- Ensure overall project duration stays **≤ 12 months**."
         "- Auto-calculate **End Date = Start Date + Effort Months**.\n"
         "- Auto-calculate **overview.Duration** as the total span in months from the earliest Start Date to the latest End Date.\n"
-        "- `Complexity` should be simple, medium, or large based on duration of project.\n"
+        "- `Complexity` should be simple, medium, or high based on duration of project.\n"
         "- **Always assign at least one Resource**."
         "- Distinguish `Owner` (responsible lead role) and `Resources` (supporting roles)."
         "\n"
@@ -885,9 +890,27 @@ def _build_architecture_prompt(rfp_text: str, kb_chunks: List[str], project=None
 
     ---
 
-    ###  STEP 4 — OUTPUT RULES
-    - Output *only* the Graphviz DOT syntax — **no markdown**, **no reasoning**, **no commentary**
-    - The final response should be a single valid DOT diagram ready for rendering
+    ###  STEP 4 — OUTPUT RULES (CRITICAL!)
+
+    **YOUR RESPONSE MUST START WITH:** digraph Architecture {{
+    **YOUR RESPONSE MUST END WITH:** }}
+
+    - Output *only* valid Graphviz DOT syntax
+    - **NO** markdown code fences
+    - **NO** explanatory text before or after the DOT code
+    - **NO** reasoning or commentary
+    - **NO** sentences like "Based on the analysis..." or "Here is the code..."
+    - The FIRST character of your response must be "d" (from digraph)
+    - The LAST character of your response must be closing brace
+
+    **WRONG (Do NOT do this):**
+    Based on the analysis, here is the code:
+    digraph Architecture {{ ... }}
+
+    **CORRECT (Do this):**
+    digraph Architecture {{ ... }}
+
+    Your response must be pure DOT code that can be directly passed to Graphviz without any processing.
     """
 
 async def _generate_fallback_architecture(
@@ -1038,8 +1061,23 @@ async def generate_architecture(
         return await _generate_fallback_architecture(db, project, blob_base_path)
 
     # ---------- Step 2: Clean & sanitize DOT ----------
+    # Remove markdown code fences
     dot_code = re.sub(r"```[a-zA-Z]*", "", dot_code).replace("```", "").strip()
     dot_code = dot_code.strip("`").strip()
+
+    # Extract only the DOT code if LLM added commentary
+    # Look for "digraph" and extract from there to the last closing brace
+    match = re.search(r'(digraph\s+\w+\s*\{.*\})\s*$', dot_code, re.DOTALL | re.IGNORECASE)
+    if match:
+        dot_code = match.group(1).strip()
+    else:
+        # Try to find any digraph block
+        match = re.search(r'digraph\s+\w+\s*\{', dot_code, re.IGNORECASE)
+        if match:
+            # Extract from digraph to the end
+            start_idx = match.start()
+            dot_code = dot_code[start_idx:].strip()
+
     dot_code = re.sub(r"(?i)^graph\s", "digraph ", dot_code)
 
     # Fix brace mismatch
