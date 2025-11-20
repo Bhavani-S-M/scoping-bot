@@ -925,6 +925,267 @@ def _build_architecture_prompt(rfp_text: str, kb_chunks: List[str], project=None
     Your response must be pure DOT code that can be directly passed to Graphviz without any processing.
     """
 
+
+def _build_eraser_architecture_prompt(rfp_text: str, kb_chunks: List[str], project=None) -> str:
+    """
+    Build prompt for Eraser.io DSL architecture diagram generation.
+    Focuses on using EXACT tech stack from RFP.
+    """
+    name = (getattr(project, "name", "") or "Untitled Project").strip()
+    domain = (getattr(project, "domain", "") or "General").strip()
+    tech = (getattr(project, "tech_stack", "") or "Modern Web + Cloud Stack").strip()
+
+    # Convert tech_stack string to list if needed
+    tech_list = []
+    if tech:
+        if isinstance(tech, str):
+            # Split by common delimiters
+            tech_list = [t.strip() for t in re.split(r'[,;|]', tech) if t.strip()]
+        elif isinstance(tech, list):
+            tech_list = tech
+
+    tech_list_str = "\n".join(f"  - {t}" for t in tech_list) if tech_list else "  - (No specific tech stack provided)"
+
+    return f"""
+    You are a **senior cloud architect** creating an **Eraser.io architecture diagram**.
+
+    ### PROJECT CONTEXT
+    - **Project Name:** {name}
+    - **Domain:** {domain}
+    - **Tech Stack (CRITICAL - USE THESE EXACT TECHNOLOGIES):**
+{tech_list_str}
+
+    ### RFP SUMMARY
+    {rfp_text}
+
+    ### KNOWLEDGE BASE CONTEXT
+    {kb_chunks}
+
+    ---
+
+    ### TASK
+    Generate **Eraser.io DSL syntax** for a cloud architecture diagram.
+
+    **CRITICAL REQUIREMENTS:**
+    1. **USE ONLY THE TECH STACK LISTED ABOVE** - Do NOT invent or add technologies not in the tech stack
+    2. Each technology from the tech stack MUST appear as a node in the diagram
+    3. Use appropriate cloud icons for each technology
+    4. Show logical data flows and connections
+    5. Group related components together
+
+    ---
+
+    ### ERASER.IO DSL SYNTAX RULES
+
+    **Nodes:**
+    ```
+    NodeName [icon: icon-name, color: color-name]
+    ```
+
+    **Groups (containers):**
+    ```
+    GroupName {{
+      Node1 [icon: aws-lambda]
+      Node2 [icon: aws-s3]
+    }}
+    ```
+
+    **Connections (arrows):**
+    ```
+    Node1 > Node2
+    Node1 > Node2, Node3, Node4
+    ```
+
+    **Available Cloud Icons:**
+    - **Azure:** azure-functions, azure-blob-storage, azure-sql-database, azure-cosmos-db, azure-app-service, azure-api-management, azure-data-factory, azure-databricks, azure-synapse-analytics, azure-power-bi, azure-devops, azure-kubernetes-service, azure-virtual-machines
+    - **AWS:** aws-lambda, aws-s3, aws-rds, aws-dynamodb, aws-ec2, aws-api-gateway, aws-ecs, aws-eks, aws-cloudfront, aws-sqs, aws-sns
+    - **GCP:** gcp-cloud-functions, gcp-cloud-storage, gcp-cloud-sql, gcp-firestore, gcp-compute-engine, gcp-kubernetes-engine
+    - **General:** database, server, cloud, api, monitor, tool, globe
+
+    ---
+
+    ### DOMAIN-SPECIFIC PATTERNS (Use if matching domain)
+
+    - **Data Analytics/BI:** ETL Pipeline, Data Lake, Data Warehouse, BI Dashboard, Analytics Engine
+    - **FinTech:** Payment Gateway, Fraud Detection, KYC Service, Transaction DB, Ledger
+    - **HealthTech:** Patient Portal, EHR System, FHIR API, Compliance Layer
+    - **AI/ML:** Model API, Training Pipeline, Feature Store, Model Registry
+    - **E-Commerce:** Product Catalog, Shopping Cart, Payment Processor, Order Management
+
+    ---
+
+    ### OUTPUT RULES (CRITICAL!)
+
+    **YOUR RESPONSE MUST:**
+    1. Start immediately with node/group definitions (no explanatory text)
+    2. Use ONLY technologies from the tech stack provided above
+    3. Be pure Eraser.io DSL syntax
+    4. NOT include markdown, commentary, or explanations
+    5. Map each tech stack item to appropriate cloud icon
+
+    **WRONG (Do NOT do this):**
+    ```
+    Based on the analysis, here's the architecture:
+    VPC {{ ... }}
+    ```
+
+    **CORRECT (Do this):**
+    ```
+    Cloud Infrastructure {{
+      Azure Data Factory [icon: azure-data-factory, color: blue]
+      Azure Databricks [icon: azure-databricks, color: orange]
+    }}
+
+    Azure Data Factory > Azure Databricks
+    ```
+
+    **TECH STACK MAPPING EXAMPLES:**
+    - "Azure Data Factory" → `Azure Data Factory [icon: azure-data-factory]`
+    - "Power BI" → `Power BI Dashboard [icon: azure-power-bi]`
+    - "Azure SQL Database" → `Azure SQL DB [icon: azure-sql-database]`
+    - "Kubernetes" → `Kubernetes Cluster [icon: azure-kubernetes-service]`
+    - "React" → `React Frontend [icon: react]`
+    - "Node.js" → `Node.js API [icon: nodejs]`
+
+    **Remember:** Your output must be **PURE Eraser.io DSL** with NO additional text!
+    """
+
+
+async def _call_eraser_api(dsl_code: str) -> tuple[str | None, str | None]:
+    """
+    Call Eraser.io API to render architecture diagram.
+    Returns: (image_url, editor_url) tuple or (None, None) on failure
+    """
+    from app.config.config import ERASER_IO_API_KEY, ERASER_IO_API_URL
+
+    if not ERASER_IO_API_KEY:
+        logger.warning("⚠️ ERASER_IO_API_KEY not configured - skipping Eraser.io diagram generation")
+        return None, None
+
+    headers = {
+        "Authorization": f"Bearer {ERASER_IO_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    payload = {
+        "theme": "light",
+        "background": True,
+        "elements": [
+            {
+                "type": "diagram",
+                "diagramType": "cloud-architecture-diagram",
+                "code": dsl_code
+            }
+        ]
+    }
+
+    try:
+        logger.info(f"🎨 Calling Eraser.io API to render architecture diagram...")
+        response = await anyio.to_thread.run_sync(
+            lambda: requests.post(ERASER_IO_API_URL, headers=headers, json=payload, timeout=30)
+        )
+
+        if response.status_code == 200:
+            result = response.json()
+            image_url = result.get("imageUrl")
+            editor_url = result.get("createEraserFileUrl")
+            logger.info(f"✅ Eraser.io diagram generated successfully: {image_url}")
+            return image_url, editor_url
+        else:
+            logger.error(f"❌ Eraser.io API error: {response.status_code} - {response.text}")
+            return None, None
+
+    except Exception as e:
+        logger.error(f"❌ Eraser.io API call failed: {e}")
+        return None, None
+
+
+async def generate_architecture_eraser(
+    db: AsyncSession,
+    project,
+    rfp_text: str,
+    kb_chunks: List[str],
+    blob_base_path: str,
+) -> tuple[models.ProjectFile | None, str]:
+    """
+    Generate architecture diagram using Eraser.io API.
+    Downloads PNG from Eraser.io and stores in Azure Blob.
+    Falls back to Graphviz if Eraser.io is not configured or fails.
+    """
+    from app.config.config import ERASER_IO_API_KEY
+
+    # Check if Eraser.io is configured
+    if not ERASER_IO_API_KEY:
+        logger.info("📊 Eraser.io not configured - using Graphviz fallback")
+        return await generate_architecture(db, project, rfp_text, kb_chunks, blob_base_path)
+
+    prompt = _build_eraser_architecture_prompt(rfp_text, kb_chunks, project)
+
+    # Step 1: Generate Eraser.io DSL from LLM
+    async def _generate_dsl_from_ai(retry: int = 0) -> str:
+        """Call Ollama to generate Eraser.io DSL."""
+        try:
+            return await anyio.to_thread.run_sync(lambda: ollama_chat(prompt, temperature=0.7))
+        except Exception as e:
+            if retry < 2:
+                logger.warning(f"Ollama call failed (retry {retry+1}/3): {e}")
+                await anyio.sleep(2)
+                return await _generate_dsl_from_ai(retry + 1)
+            logger.error(f"Ollama DSL generation failed after retries: {e}")
+            return ""
+
+    dsl_code = await _generate_dsl_from_ai()
+    if not dsl_code:
+        logger.warning("⚠️ No DSL code returned by AI - using Graphviz fallback")
+        return await generate_architecture(db, project, rfp_text, kb_chunks, blob_base_path)
+
+    # Step 2: Clean DSL code
+    dsl_code = re.sub(r"```[a-zA-Z]*", "", dsl_code).replace("```", "").strip()
+    dsl_code = dsl_code.strip("`").strip()
+
+    logger.info(f"📝 Generated Eraser.io DSL ({len(dsl_code)} chars)")
+
+    # Step 3: Call Eraser.io API
+    image_url, editor_url = await _call_eraser_api(dsl_code)
+
+    if not image_url:
+        logger.warning("⚠️ Eraser.io rendering failed - using Graphviz fallback")
+        return await generate_architecture(db, project, rfp_text, kb_chunks, blob_base_path)
+
+    # Step 4: Download PNG from Eraser.io
+    try:
+        logger.info(f"📥 Downloading diagram from Eraser.io: {image_url}")
+        png_response = await anyio.to_thread.run_sync(
+            lambda: requests.get(image_url, timeout=30)
+        )
+        png_response.raise_for_status()
+        png_bytes = png_response.content
+
+        # Step 5: Upload to Azure Blob
+        blob_name_png = f"{blob_base_path}/architecture_eraser_{project.id}.png"
+        await azure_blob.upload_bytes(blob_name_png, png_bytes, content_type="image/png")
+        logger.info(f"✅ Uploaded Eraser.io diagram to Azure: {blob_name_png}")
+
+        # Step 6: Store in database
+        db_file = models.ProjectFile(
+            project_id=project.id,
+            file_name=f"architecture_eraser_{project.id}.png",
+            file_path=blob_name_png,
+            file_type="image/png",
+        )
+        db.add(db_file)
+        await db.commit()
+        await db.refresh(db_file)
+
+        logger.info(f"✅ Eraser.io architecture diagram stored for project {project.id}: {blob_name_png}")
+        return db_file, blob_name_png
+
+    except Exception as e:
+        logger.error(f"❌ Failed to download/store Eraser.io diagram: {e}")
+        logger.info("⚠️ Falling back to Graphviz")
+        return await generate_architecture(db, project, rfp_text, kb_chunks, blob_base_path)
+
+
 async def _generate_fallback_architecture(
     db: AsyncSession,
     project,
@@ -1620,10 +1881,10 @@ Generate activities with realistic start/end dates, proper role assignments, and
                 logger.warning(f" Failed to update project metadata: {e}")
 
 
-        # Step 2: Generate + store architecture diagram
+        # Step 2: Generate + store architecture diagram (using Eraser.io or Graphviz fallback)
         try:
             blob_base_path = f"{PROJECTS_BASE}/{getattr(project, 'id', 'unknown')}"
-            db_file, arch_blob = await generate_architecture(
+            db_file, arch_blob = await generate_architecture_eraser(
                 db, project, rfp_text, kb_chunks, blob_base_path
             )
             cleaned_scope["architecture_diagram"] = arch_blob or None

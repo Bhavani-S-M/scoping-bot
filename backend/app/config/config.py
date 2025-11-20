@@ -54,3 +54,7 @@ QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
 QDRANT_PORT = int(os.getenv("QDRANT_PORT", "6333"))
 QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "knowledge_chunks")
 
+# ---------- ERASER.IO API (Architecture Diagrams) ----------
+ERASER_IO_API_KEY = os.getenv("ERASER_IO_API_KEY", "")
+ERASER_IO_API_URL = os.getenv("ERASER_IO_API_URL", "https://app.eraser.io/api/render/elements")
+
