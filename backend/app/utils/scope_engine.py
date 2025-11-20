@@ -910,6 +910,8 @@ def _build_architecture_prompt(rfp_text: str, kb_chunks: List[str], project=None
     - **NO** explanatory text before or after the DOT code
     - **NO** reasoning or commentary
     - **NO** sentences like "Based on the analysis..." or "Here is the code..."
+    - **NO** C-style comments (//) - DOT does not support them! Use # or /* */ if needed
+    - **NO** escaped quotes (\") - Use plain quotes in attribute values
     - The FIRST character of your response must be "d" (from digraph)
     - The LAST character of your response must be closing brace
 
@@ -1089,6 +1091,15 @@ async def generate_architecture(
             dot_code = dot_code[start_idx:].strip()
 
     dot_code = re.sub(r"(?i)^graph\s", "digraph ", dot_code)
+
+    # Remove C-style comments (// ...) - Graphviz DOT doesn't support them
+    dot_code = re.sub(r'//[^\n]*', '', dot_code)
+
+    # Fix escaped quotes - DOT doesn't need escaped quotes in attribute values
+    dot_code = dot_code.replace('\\"', '"')
+
+    # Remove extra whitespace and blank lines
+    dot_code = '\n'.join(line for line in dot_code.split('\n') if line.strip())
 
     # Fix brace mismatch
     open_braces = dot_code.count("{")
