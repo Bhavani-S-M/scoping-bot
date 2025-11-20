@@ -350,11 +350,21 @@ def _build_scope_prompt(rfp_text: str, kb_chunks: List[str], project=None, quest
         '      "Effort Months": number\n'
         "    }\n"
         "  ],\n"
-        '  "resourcing_plan": []\n'
+        '  "resourcing_plan": [],\n'
+        '  "project_summary": {\n'
+        '    "executive_summary": string,\n'
+        '    "key_deliverables": [string],\n'
+        '    "success_criteria": [string],\n'
+        '    "risks_and_mitigation": [string]\n'
+        "  }\n"
         "}\n\n"
+        "**Project Summary Guidelines:**\n"
+        "- `executive_summary`: 2-3 paragraph high-level summary of project goals, scope, and expected outcomes\n"
+        "- `key_deliverables`: List 5-8 major deliverables (e.g., 'Fully functional mobile app', 'REST API with documentation')\n"
+        "- `success_criteria`: List 4-6 measurable success metrics (e.g., 'System handles 10k concurrent users', 'API response time < 200ms')\n"
+        "- `risks_and_mitigation`: List 4-6 project risks with mitigation strategies (e.g., 'Risk: Third-party API downtime. Mitigation: Implement fallback caching')\n\n"
         "**CRITICAL: Output ONLY the schema above. Do NOT add:**\n"
         "- ❌ \"cost_projection\" field (this will be auto-generated from resourcing_plan)\n"
-        "- ❌ \"project_summary\" field (this will be auto-generated)\n"
         "- ❌ Any other fields not listed in the schema above\n"
         "- ❌ No markdown, no commentary, no explanations — ONLY valid JSON matching the schema\n\n"
         "Scheduling Rules: \n"
